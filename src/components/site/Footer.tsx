@@ -4,8 +4,11 @@ import logoUrl from "@/assets/logo.png?url";
 
 export function Footer() {
   return (
-    <footer id="contact" className="scroll-mt-20 border-t border-border bg-primary text-primary-foreground">
-      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-4 py-10 sm:grid-cols-3">
+    <footer
+      id="contact"
+      className="scroll-mt-20 border-t border-border bg-primary text-primary-foreground"
+    >
+      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-4 py-10 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
         <div>
           <div className="flex items-center gap-2.5">
             <img
@@ -32,16 +35,6 @@ export function Footer() {
               <MapPin className="h-4 w-4 shrink-0" />
               {BUSINESS.location}
             </li>
-          </ul>
-        </div>
-
-        <div>
-          <h3 className="font-display text-base">Ordering Info</h3>
-          <ul className="mt-3 space-y-1.5 text-sm text-primary-foreground/85">
-            <li>Delivery only — $30 fee</li>
-            <li>Minimum {BUSINESS.minimumPeople} people</li>
-            <li>{BUSINESS.advanceNoticeHours} hours advance notice, please</li>
-            <li>Individually wrapped meals: {BUSINESS.wrappedRange}</li>
           </ul>
         </div>
       </div>

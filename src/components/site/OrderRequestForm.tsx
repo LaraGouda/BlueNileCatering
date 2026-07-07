@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { Send, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useCart } from "@/lib/cart-context";
-import { saveOrderRequest, type NewDashboardOrder } from "@/lib/order-store";
+import {
+  createDashboardOrder,
+  saveDashboardOrder,
+  type NewDashboardOrder,
+} from "@/lib/order-store";
+import { submitOrderToGoogleSheets } from "@/lib/google-sheets.functions";
 import { BUSINESS, formatPrice } from "@/data/menu";
 
 interface FormState {
@@ -46,8 +52,10 @@ const EMPTY_FORM: FormState = {
 
 export function OrderRequestForm() {
   const { lines, subtotal, deliveryFee, total, clear } = useCart();
+  const submitOrderToSheets = useServerFn(submitOrderToGoogleSheets);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const set = (field: keyof FormState) => (value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -87,8 +95,10 @@ export function OrderRequestForm() {
     return Object.keys(next).length === 0;
   };
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+
+    if (isSubmitting) return;
 
     if (lines.length === 0) {
       toast.warning("Your cart is empty — add menu items before submitting.");
@@ -132,26 +142,28 @@ export function OrderRequestForm() {
       },
     };
 
-    // ------------------------------------------------------------------
-    // FUTURE BACKEND SUBMISSION GOES HERE
-    //
-    // e.g. Google Sheets (via Apps Script web app or Sheets API endpoint):
-    //   await fetch(GOOGLE_SHEETS_WEBHOOK_URL, {
-    //     method: "POST",
-    //     headers: { "Content-Type": "application/json" },
-    //     body: JSON.stringify(orderPayload),
-    //   });
-    //
-    // Payment processing would also be initiated here once connected.
-    // ------------------------------------------------------------------
-    const savedOrder = saveOrderRequest(orderPayload);
-    console.log("Order request payload:", savedOrder);
+    const order = createDashboardOrder(orderPayload);
 
-    toast.success(
-      "Order request captured! (Not sent yet — backend coming soon.) Check the console for the payload.",
-    );
-    setForm(EMPTY_FORM);
-    clear();
+    try {
+      setIsSubmitting(true);
+      const result = await submitOrderToSheets({ data: order });
+      saveDashboardOrder(order);
+      console.log("Order request payload:", order);
+
+      if (result.savedToGoogleSheets) {
+        toast.success("Order request sent! We'll confirm your order soon.");
+      } else {
+        toast.warning(`Order captured locally only. ${result.reason}`);
+      }
+
+      setForm(EMPTY_FORM);
+      clear();
+    } catch (error) {
+      console.error("Order request submission failed:", error);
+      toast.error("We couldn't send your order request. Please try again or call us.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const field = (id: keyof FormState, label: string, input: React.ReactNode) => (
@@ -352,9 +364,9 @@ export function OrderRequestForm() {
             </div>
           </div>
 
-          <Button type="submit" size="lg" className="w-full">
+          <Button type="submit" size="lg" className="w-full" disabled={isSubmitting}>
             <Send className="h-4 w-4" />
-            Submit Order Request
+            {isSubmitting ? "Submitting..." : "Submit Order Request"}
           </Button>
 
           {/* Placeholder — payment is NOT connected yet. Do not treat as a real checkout. */}

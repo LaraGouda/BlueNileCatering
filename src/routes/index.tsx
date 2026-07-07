@@ -17,6 +17,7 @@ function Index() {
       className="min-h-screen"
       style={{
         backgroundImage: `url(${cateringBgUrl})`,
+        backgroundPosition: "-250px 0",
         backgroundRepeat: "repeat",
         backgroundSize: "auto",
       }}

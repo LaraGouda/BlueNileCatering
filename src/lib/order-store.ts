@@ -151,24 +151,31 @@ export function saveDashboardOrders(orders: DashboardOrder[]) {
   window.localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(orders));
 }
 
-export function saveOrderRequest(order: NewDashboardOrder): DashboardOrder {
-  const nextOrder: DashboardOrder = {
+export function createDashboardOrder(order: NewDashboardOrder): DashboardOrder {
+  return {
     ...order,
     id: createOrderId(),
     status: "new",
   };
+}
 
-  if (typeof window === "undefined") return nextOrder;
+export function saveDashboardOrder(order: DashboardOrder) {
+  if (typeof window === "undefined") return;
 
   try {
     const raw = window.localStorage.getItem(ORDERS_STORAGE_KEY);
     const existing = raw ? (JSON.parse(raw) as DashboardOrder[]) : [];
     const orders = Array.isArray(existing) ? existing : [];
-    window.localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify([nextOrder, ...orders]));
+    const withoutDuplicate = orders.filter((existingOrder) => existingOrder.id !== order.id);
+    window.localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify([order, ...withoutDuplicate]));
   } catch {
     // The order form still completes even if local storage is unavailable.
   }
+}
 
+export function saveOrderRequest(order: NewDashboardOrder): DashboardOrder {
+  const nextOrder = createDashboardOrder(order);
+  saveDashboardOrder(nextOrder);
   return nextOrder;
 }
 
