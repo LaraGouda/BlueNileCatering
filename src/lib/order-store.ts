@@ -1,4 +1,26 @@
-export type DashboardOrderStatus = "new" | "confirmed" | "preparing" | "ready" | "completed";
+export type DashboardOrderStatus =
+  "new" | "confirmed" | "preparing" | "ready" | "completed" | "declined";
+export type DashboardPaymentStatus =
+  "unpaid" | "pending" | "authorized" | "paid" | "canceled" | "failed" | "refunded";
+
+export const DASHBOARD_ORDER_STATUSES: DashboardOrderStatus[] = [
+  "new",
+  "confirmed",
+  "preparing",
+  "ready",
+  "completed",
+  "declined",
+];
+
+export const DASHBOARD_PAYMENT_STATUSES: DashboardPaymentStatus[] = [
+  "unpaid",
+  "pending",
+  "authorized",
+  "paid",
+  "canceled",
+  "failed",
+  "refunded",
+];
 
 export interface DashboardOrderLine {
   item: string;
@@ -13,6 +35,12 @@ export interface DashboardOrder {
   id: string;
   submittedAt: string;
   status: DashboardOrderStatus;
+  payment: {
+    status: DashboardPaymentStatus;
+    stripeCheckoutSessionId: string;
+    stripePaymentIntentId: string;
+    stripeReceiptUrl: string;
+  };
   business: string;
   customer: {
     name: string;
@@ -33,11 +61,17 @@ export interface DashboardOrder {
   totals: {
     subtotal: number;
     deliveryFee: number;
+    tax: number;
     estimatedTotal: number;
+    finalTotal: number | null;
   };
 }
 
-export type NewDashboardOrder = Omit<DashboardOrder, "id" | "status">;
+export type NewDashboardOrder = Omit<DashboardOrder, "id" | "status" | "payment" | "totals"> & {
+  payment?: Partial<DashboardOrder["payment"]>;
+  totals: Omit<DashboardOrder["totals"], "tax" | "finalTotal"> &
+    Partial<Pick<DashboardOrder["totals"], "tax" | "finalTotal">>;
+};
 
 const ORDERS_STORAGE_KEY = "blue-nile-orders-v1";
 
@@ -46,6 +80,12 @@ const SAMPLE_ORDERS: DashboardOrder[] = [
     id: "BN-0726-1001",
     submittedAt: "2026-07-07T13:15:00.000Z",
     status: "new",
+    payment: {
+      status: "unpaid",
+      stripeCheckoutSessionId: "",
+      stripePaymentIntentId: "",
+      stripeReceiptUrl: "",
+    },
     business: "Blue Nile Mediterranean Grill",
     customer: {
       name: "Maya Hassan",
@@ -83,13 +123,21 @@ const SAMPLE_ORDERS: DashboardOrder[] = [
     totals: {
       subtotal: 210,
       deliveryFee: 30,
+      tax: 0,
       estimatedTotal: 240,
+      finalTotal: null,
     },
   },
   {
     id: "BN-0726-1002",
     submittedAt: "2026-07-07T15:40:00.000Z",
     status: "confirmed",
+    payment: {
+      status: "unpaid",
+      stripeCheckoutSessionId: "",
+      stripePaymentIntentId: "",
+      stripeReceiptUrl: "",
+    },
     business: "Blue Nile Mediterranean Grill",
     customer: {
       name: "Jordan Lee",
@@ -127,7 +175,9 @@ const SAMPLE_ORDERS: DashboardOrder[] = [
     totals: {
       subtotal: 190,
       deliveryFee: 30,
+      tax: 0,
       estimatedTotal: 220,
+      finalTotal: null,
     },
   },
 ];
@@ -140,7 +190,7 @@ export function loadDashboardOrders(): DashboardOrder[] {
     if (!raw) return SAMPLE_ORDERS;
 
     const parsed = JSON.parse(raw) as DashboardOrder[];
-    return Array.isArray(parsed) ? parsed : SAMPLE_ORDERS;
+    return Array.isArray(parsed) ? parsed.map(withOrderDefaults) : SAMPLE_ORDERS;
   } catch {
     return SAMPLE_ORDERS;
   }
@@ -156,6 +206,8 @@ export function createDashboardOrder(order: NewDashboardOrder): DashboardOrder {
     ...order,
     id: createOrderId(),
     status: "new",
+    payment: withPaymentDefaults(order.payment),
+    totals: withTotalDefaults(order.totals),
   };
 }
 
@@ -183,4 +235,39 @@ function createOrderId() {
   const stamp = new Date().toISOString().replace(/\D/g, "").slice(2, 14);
   const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
   return `BN-${stamp}-${suffix}`;
+}
+
+export function isDashboardOrderStatus(value: string): value is DashboardOrderStatus {
+  return DASHBOARD_ORDER_STATUSES.includes(value as DashboardOrderStatus);
+}
+
+export function isDashboardPaymentStatus(value: string): value is DashboardPaymentStatus {
+  return DASHBOARD_PAYMENT_STATUSES.includes(value as DashboardPaymentStatus);
+}
+
+function withOrderDefaults(order: DashboardOrder): DashboardOrder {
+  return {
+    ...order,
+    payment: withPaymentDefaults(order.payment),
+    totals: withTotalDefaults(order.totals),
+  };
+}
+
+function withPaymentDefaults(payment: Partial<DashboardOrder["payment"]> | undefined) {
+  return {
+    status: payment?.status ?? "unpaid",
+    stripeCheckoutSessionId: payment?.stripeCheckoutSessionId ?? "",
+    stripePaymentIntentId: payment?.stripePaymentIntentId ?? "",
+    stripeReceiptUrl: payment?.stripeReceiptUrl ?? "",
+  };
+}
+
+function withTotalDefaults(totals: NewDashboardOrder["totals"]): DashboardOrder["totals"] {
+  return {
+    subtotal: totals.subtotal,
+    deliveryFee: totals.deliveryFee,
+    tax: totals.tax ?? 0,
+    estimatedTotal: totals.estimatedTotal,
+    finalTotal: totals.finalTotal ?? null,
+  };
 }

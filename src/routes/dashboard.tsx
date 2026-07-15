@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import {
   CalendarClock,
   CheckCircle2,
@@ -13,8 +14,9 @@ import {
   ShieldCheck,
   ShoppingBag,
   Users,
+  XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -24,11 +26,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import {
+  DASHBOARD_ORDER_STATUSES,
   loadDashboardOrders,
   saveDashboardOrders,
   type DashboardOrder,
   type DashboardOrderStatus,
+  type DashboardPaymentStatus,
 } from "@/lib/order-store";
+import {
+  loadOrdersFromGoogleSheets,
+  updateGoogleSheetsOrderStatus,
+} from "@/lib/google-sheets.functions";
+import {
+  cancelStripeAuthorizedPayment,
+  captureStripeAuthorizedPayment,
+} from "@/lib/stripe.functions";
 import { formatPrice } from "@/data/menu";
 import logoUrl from "@/assets/logo.png?url";
 
@@ -37,7 +49,7 @@ export const Route = createFileRoute("/dashboard")({
 });
 
 const DASHBOARD_SESSION_KEY = "blue-nile-dashboard-unlocked";
-const DASHBOARD_PIN = import.meta.env.VITE_OWNER_DASHBOARD_PIN ?? "2468";
+const DASHBOARD_PIN = import.meta.env.VITE_OWNER_DASHBOARD_PIN?.trim() ?? "";
 
 const STATUS_LABELS: Record<DashboardOrderStatus, string> = {
   new: "New",
@@ -45,9 +57,20 @@ const STATUS_LABELS: Record<DashboardOrderStatus, string> = {
   preparing: "Preparing",
   ready: "Ready",
   completed: "Completed",
+  declined: "Declined",
 };
 
-const STATUS_OPTIONS = Object.keys(STATUS_LABELS) as DashboardOrderStatus[];
+const PAYMENT_LABELS: Record<DashboardPaymentStatus, string> = {
+  unpaid: "Unpaid",
+  pending: "Pending",
+  authorized: "Authorized",
+  paid: "Paid",
+  canceled: "Canceled",
+  failed: "Failed",
+  refunded: "Refunded",
+};
+
+const STATUS_OPTIONS = DASHBOARD_ORDER_STATUSES;
 
 function DashboardRoute() {
   const [unlocked, setUnlocked] = useState(false);
@@ -73,6 +96,10 @@ function DashboardLock({ onUnlock }: { onUnlock: () => void }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (!DASHBOARD_PIN) {
+      toast.error("Dashboard passcode is not configured.");
+      return;
+    }
     if (pin === DASHBOARD_PIN) {
       window.sessionStorage.setItem(DASHBOARD_SESSION_KEY, "true");
       onUnlock();
@@ -114,16 +141,54 @@ function DashboardLock({ onUnlock }: { onUnlock: () => void }) {
 }
 
 function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
+  const loadOrdersFromSheets = useServerFn(loadOrdersFromGoogleSheets);
+  const updateOrderStatusOnSheets = useServerFn(updateGoogleSheetsOrderStatus);
+  const capturePaymentOnStripe = useServerFn(captureStripeAuthorizedPayment);
+  const cancelPaymentOnStripe = useServerFn(cancelStripeAuthorizedPayment);
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
   const [selectedStatus, setSelectedStatus] = useState<DashboardOrderStatus>("new");
   const [query, setQuery] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
+  const [savingOrderId, setSavingOrderId] = useState<string | null>(null);
+  const [ordersSource, setOrdersSource] = useState<"google" | "local">("google");
+
+  const refreshOrders = useCallback(async () => {
+    setIsLoadingOrders(true);
+
+    try {
+      const result = await loadOrdersFromSheets();
+      const loadedOrders = result.loadedFromGoogleSheets ? result.orders : loadDashboardOrders();
+
+      setOrders(loadedOrders);
+      setSelectedOrderId((current) =>
+        loadedOrders.some((order) => order.id === current) ? current : (loadedOrders[0]?.id ?? ""),
+      );
+      setOrdersSource(result.loadedFromGoogleSheets ? "google" : "local");
+
+      if (!result.loadedFromGoogleSheets) {
+        toast.warning(`Showing local dashboard orders. ${result.reason}`);
+      }
+    } catch (error) {
+      console.error("Google Sheets order load failed:", error);
+
+      const fallbackOrders = loadDashboardOrders();
+      setOrders(fallbackOrders);
+      setSelectedOrderId((current) =>
+        fallbackOrders.some((order) => order.id === current)
+          ? current
+          : (fallbackOrders[0]?.id ?? ""),
+      );
+      setOrdersSource("local");
+      toast.error("Could not load Google Sheets orders. Showing local dashboard orders.");
+    } finally {
+      setIsLoadingOrders(false);
+    }
+  }, [loadOrdersFromSheets]);
 
   useEffect(() => {
-    const loadedOrders = loadDashboardOrders();
-    setOrders(loadedOrders);
-    setSelectedOrderId(loadedOrders[0]?.id ?? "");
-  }, []);
+    refreshOrders();
+  }, [refreshOrders]);
 
   const filteredOrders = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -152,13 +217,94 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
     };
   }, [orders]);
 
-  const setOrderStatus = (orderId: string, status: DashboardOrderStatus) => {
-    setOrders((prev) => {
-      const next = prev.map((order) => (order.id === orderId ? { ...order, status } : order));
-      saveDashboardOrders(next);
-      return next;
-    });
+  const setOrderStatus = async (orderId: string, status: DashboardOrderStatus) => {
+    const previousOrders = orders;
+    const nextOrders = orders.map((order) => (order.id === orderId ? { ...order, status } : order));
+
+    setOrders(nextOrders);
     setSelectedStatus(status);
+    setSavingOrderId(orderId);
+
+    try {
+      const result = await updateOrderStatusOnSheets({ data: { orderId, status } });
+
+      if (result.updatedGoogleSheets) {
+        setOrdersSource("google");
+        toast.success("Order status updated in Google Sheets.");
+      } else {
+        saveDashboardOrders(nextOrders);
+        setOrdersSource("local");
+        toast.warning(`Order status saved locally only. ${result.reason}`);
+      }
+    } catch (error) {
+      console.error("Google Sheets status update failed:", error);
+      setOrders(previousOrders);
+      toast.error("Could not update the order status in Google Sheets.");
+    } finally {
+      setSavingOrderId(null);
+    }
+  };
+
+  const confirmAndChargeOrder = async (order: DashboardOrder) => {
+    if (!order.payment.stripePaymentIntentId) {
+      toast.error("This order does not have a Stripe payment intent yet.");
+      return;
+    }
+
+    setSavingOrderId(order.id);
+
+    try {
+      const result = await capturePaymentOnStripe({
+        data: {
+          orderId: order.id,
+          paymentIntentId: order.payment.stripePaymentIntentId,
+        },
+      });
+
+      if (result.completed) {
+        toast.success("Payment captured and order confirmed.");
+        setSelectedStatus("confirmed");
+        await refreshOrders();
+      } else {
+        toast.error(result.reason);
+      }
+    } catch (error) {
+      console.error("Stripe capture failed:", error);
+      toast.error("Could not capture the payment.");
+    } finally {
+      setSavingOrderId(null);
+    }
+  };
+
+  const declineAndReleaseOrder = async (order: DashboardOrder) => {
+    if (!order.payment.stripePaymentIntentId) {
+      toast.error("This order does not have a Stripe payment intent yet.");
+      return;
+    }
+
+    setSavingOrderId(order.id);
+
+    try {
+      const result = await cancelPaymentOnStripe({
+        data: {
+          orderId: order.id,
+          paymentIntentId: order.payment.stripePaymentIntentId,
+        },
+      });
+
+      if (result.completed) {
+        toast.success("Authorization canceled and order declined.");
+        setSelectedStatus("declined");
+        await refreshOrders();
+      } else {
+        toast.error(result.reason);
+      }
+    } catch (error) {
+      console.error("Stripe cancellation failed:", error);
+      toast.error("Could not cancel the payment authorization.");
+    } finally {
+      setSavingOrderId(null);
+    }
   };
 
   return (
@@ -205,7 +351,13 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <CardTitle className="font-display text-xl text-primary">Order Queue</CardTitle>
-                  <CardDescription>{filteredOrders.length} orders in this view</CardDescription>
+                  <CardDescription>
+                    {isLoadingOrders
+                      ? "Loading orders from Google Sheets"
+                      : `${filteredOrders.length} orders in this view${
+                          ordersSource === "local" ? " (local fallback)" : ""
+                        }`}
+                  </CardDescription>
                 </div>
                 <div className="relative w-full lg:max-w-xs">
                   <Search
@@ -235,7 +387,11 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
-              {filteredOrders.length === 0 ? (
+              {isLoadingOrders ? (
+                <p className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                  Loading orders from Google Sheets...
+                </p>
+              ) : filteredOrders.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
                   No orders match this view.
                 </p>
@@ -258,7 +414,10 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
                           {formatEventDate(order.event.date)} at {formatTime(order.event.time)}
                         </p>
                       </div>
-                      <StatusBadge status={order.status} />
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <PaymentBadge status={order.payment.status} />
+                        <StatusBadge status={order.status} />
+                      </div>
                     </div>
                     <div className="mt-3 grid gap-2 text-sm text-muted-foreground md:grid-cols-3">
                       <span className="flex items-center gap-1.5">
@@ -276,7 +435,13 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
             </CardContent>
           </Card>
 
-          <OrderDetails order={selectedOrder} onStatusChange={setOrderStatus} />
+          <OrderDetails
+            order={selectedOrder}
+            savingOrderId={savingOrderId}
+            onStatusChange={setOrderStatus}
+            onConfirmAndCharge={confirmAndChargeOrder}
+            onDeclineAndRelease={declineAndReleaseOrder}
+          />
         </section>
       </div>
     </main>
@@ -309,10 +474,16 @@ function MetricCard({
 
 function OrderDetails({
   order,
+  savingOrderId,
   onStatusChange,
+  onConfirmAndCharge,
+  onDeclineAndRelease,
 }: {
   order: DashboardOrder | undefined;
+  savingOrderId: string | null;
   onStatusChange: (orderId: string, status: DashboardOrderStatus) => void;
+  onConfirmAndCharge: (order: DashboardOrder) => void;
+  onDeclineAndRelease: (order: DashboardOrder) => void;
 }) {
   if (!order) {
     return (
@@ -340,7 +511,10 @@ function OrderDetails({
             <CardTitle className="font-display text-xl text-primary">{order.id}</CardTitle>
             <CardDescription>Submitted {formatDateTime(order.submittedAt)}</CardDescription>
           </div>
-          <StatusBadge status={order.status} />
+          <div className="flex flex-wrap justify-end gap-2">
+            <PaymentBadge status={order.payment.status} />
+            <StatusBadge status={order.status} />
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -439,10 +613,77 @@ function OrderDetails({
             <span className="text-muted-foreground">Delivery</span>
             <span>{formatPrice(order.totals.deliveryFee)}</span>
           </div>
+          {order.totals.tax > 0 && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Tax</span>
+              <span>{formatPrice(order.totals.tax)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-base font-bold text-primary">
-            <span>Total</span>
-            <span>{formatPrice(order.totals.estimatedTotal)}</span>
+            <span>{order.totals.finalTotal === null ? "Estimated Total" : "Final Total"}</span>
+            <span>{formatPrice(order.totals.finalTotal ?? order.totals.estimatedTotal)}</span>
           </div>
+        </section>
+
+        <Separator />
+
+        <section className="space-y-2 text-sm">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
+            Payment
+          </h2>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Status</span>
+            <PaymentBadge status={order.payment.status} />
+          </div>
+          {order.payment.stripeCheckoutSessionId && (
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Checkout Session</span>
+              <span className="truncate font-mono text-xs">
+                {order.payment.stripeCheckoutSessionId}
+              </span>
+            </div>
+          )}
+          {order.payment.stripePaymentIntentId && (
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Payment Intent</span>
+              <span className="truncate font-mono text-xs">
+                {order.payment.stripePaymentIntentId}
+              </span>
+            </div>
+          )}
+          {order.payment.stripeReceiptUrl && (
+            <Button asChild variant="outline" size="sm" className="w-full">
+              <a href={order.payment.stripeReceiptUrl} target="_blank" rel="noreferrer">
+                Receipt
+              </a>
+            </Button>
+          )}
+          {order.payment.status === "authorized" && (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Button
+                size="sm"
+                disabled={savingOrderId === order.id}
+                onClick={() => onConfirmAndCharge(order)}
+              >
+                <DollarSign className="h-4 w-4" />
+                Confirm & Charge
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={savingOrderId === order.id}
+                onClick={() => onDeclineAndRelease(order)}
+              >
+                <XCircle className="h-4 w-4" />
+                Decline & Release
+              </Button>
+            </div>
+          )}
+          {order.payment.status === "pending" && (
+            <p className="rounded-md bg-muted p-2 text-xs text-muted-foreground">
+              Waiting for Stripe to confirm the card authorization.
+            </p>
+          )}
         </section>
 
         <div className="grid grid-cols-2 gap-2">
@@ -451,6 +692,7 @@ function OrderDetails({
               key={status}
               size="sm"
               variant={order.status === status ? "default" : "outline"}
+              disabled={savingOrderId === order.id}
               onClick={() => onStatusChange(order.id, status)}
             >
               {status === "completed" && <CheckCircle2 className="h-4 w-4" />}
@@ -471,6 +713,14 @@ function StatusBadge({ status }: { status: DashboardOrderStatus }) {
   );
 }
 
+function PaymentBadge({ status }: { status: DashboardPaymentStatus }) {
+  return (
+    <Badge className={`${getPaymentClass(status)} border-transparent`}>
+      {PAYMENT_LABELS[status]}
+    </Badge>
+  );
+}
+
 function getStatusClass(status: DashboardOrderStatus) {
   switch (status) {
     case "new":
@@ -482,6 +732,27 @@ function getStatusClass(status: DashboardOrderStatus) {
     case "ready":
       return "bg-accent text-accent-foreground";
     case "completed":
+      return "bg-muted text-muted-foreground";
+    case "declined":
+      return "bg-destructive text-destructive-foreground";
+  }
+}
+
+function getPaymentClass(status: DashboardPaymentStatus) {
+  switch (status) {
+    case "paid":
+      return "bg-accent text-accent-foreground";
+    case "authorized":
+      return "bg-primary text-primary-foreground";
+    case "pending":
+      return "bg-warning text-warning-foreground";
+    case "failed":
+      return "bg-destructive text-destructive-foreground";
+    case "canceled":
+      return "bg-muted text-muted-foreground";
+    case "refunded":
+      return "bg-secondary text-secondary-foreground";
+    case "unpaid":
       return "bg-muted text-muted-foreground";
   }
 }

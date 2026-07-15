@@ -1,8 +1,16 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { Send, TriangleAlert } from "lucide-react";
+import { CheckCircle2, Mail, MessageSquareText, Send, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,6 +28,7 @@ import {
   type NewDashboardOrder,
 } from "@/lib/order-store";
 import { submitOrderToGoogleSheets } from "@/lib/google-sheets.functions";
+import { createStripeCheckoutSession } from "@/lib/stripe.functions";
 import { BUSINESS, formatPrice } from "@/data/menu";
 
 interface FormState {
@@ -53,9 +62,45 @@ const EMPTY_FORM: FormState = {
 export function OrderRequestForm() {
   const { lines, subtotal, deliveryFee, total, clear } = useCart();
   const submitOrderToSheets = useServerFn(submitOrderToGoogleSheets);
+  const createCheckoutSession = useServerFn(createStripeCheckoutSession);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [checkoutResult, setCheckoutResult] = useState<{
+    status: "success" | "cancelled";
+    orderId: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const checkout = params.get("checkout");
+    const orderId = params.get("order") ?? "";
+
+    if (checkout === "success" || checkout === "cancelled") {
+      setCheckoutResult({ status: checkout, orderId });
+    }
+  }, []);
+
+  const closeCheckoutDialog = () => {
+    setCheckoutResult(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("checkout");
+    url.searchParams.delete("order");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const confirmationMessage = useMemo(() => {
+    const orderLine = checkoutResult?.orderId
+      ? `My Blue Nile catering order ID is ${checkoutResult.orderId}.`
+      : "I just submitted a Blue Nile catering order.";
+
+    return `${orderLine} Please send me a confirmation when the kitchen reviews it.`;
+  }, [checkoutResult?.orderId]);
+
+  const confirmationEmailHref = `mailto:?subject=${encodeURIComponent(
+    "Blue Nile catering order confirmation",
+  )}&body=${encodeURIComponent(confirmationMessage)}`;
+  const confirmationTextHref = `sms:?&body=${encodeURIComponent(confirmationMessage)}`;
 
   const set = (field: keyof FormState) => (value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -148,19 +193,25 @@ export function OrderRequestForm() {
       setIsSubmitting(true);
       const result = await submitOrderToSheets({ data: order });
       saveDashboardOrder(order);
-      console.log("Order request payload:", order);
 
-      if (result.savedToGoogleSheets) {
-        toast.success("Order request sent! We'll confirm your order soon.");
-      } else {
+      if (!result.savedToGoogleSheets) {
         toast.warning(`Order captured locally only. ${result.reason}`);
+        return;
       }
 
-      setForm(EMPTY_FORM);
-      clear();
+      const checkoutResult = await createCheckoutSession({ data: order });
+
+      if (checkoutResult.createdCheckoutSession) {
+        toast.success("Order saved. Opening secure Stripe checkout...");
+        setForm(EMPTY_FORM);
+        clear();
+        window.location.assign(checkoutResult.checkoutUrl);
+      } else {
+        toast.error(checkoutResult.reason);
+      }
     } catch (error) {
       console.error("Order request submission failed:", error);
-      toast.error("We couldn't send your order request. Please try again or call us.");
+      toast.error("We couldn't start checkout. Please try again or call us.");
     } finally {
       setIsSubmitting(false);
     }
@@ -176,10 +227,79 @@ export function OrderRequestForm() {
 
   return (
     <section id="order" className="scroll-mt-20 px-4 py-10">
+      <Dialog
+        open={checkoutResult !== null}
+        onOpenChange={(open) => !open && closeCheckoutDialog()}
+      >
+        <DialogContent className="max-w-md rounded-xl border-primary/20 bg-card p-6 shadow-xl">
+          <div className="space-y-5 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-800 text-white shadow-sm">
+              <CheckCircle2 className="h-7 w-7" />
+            </div>
+
+            <DialogHeader className="items-center space-y-2 text-center">
+              <DialogTitle className="font-display text-3xl text-primary">
+                {checkoutResult?.status === "success"
+                  ? "Thank you for your order!"
+                  : "Checkout was canceled"}
+              </DialogTitle>
+              <DialogDescription className="mx-auto max-w-sm text-center text-sm leading-6 text-muted-foreground">
+                {checkoutResult?.status === "success"
+                  ? "We received your catering request. Your card is only authorized for now, and the kitchen will review everything before charging."
+                  : "Your order was not submitted for payment. You can review your cart and try again when you are ready."}
+              </DialogDescription>
+            </DialogHeader>
+
+            {checkoutResult?.status === "success" && (
+              <div className="space-y-3 rounded-lg bg-secondary p-4 text-sm">
+                {checkoutResult.orderId && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                      Order ID
+                    </p>
+                    <p className="mt-1 font-mono text-base font-bold text-primary">
+                      {checkoutResult.orderId}
+                    </p>
+                  </div>
+                )}
+                <p className="text-muted-foreground">
+                  Questions or changes? Text us at{" "}
+                  <a href={BUSINESS.phoneHref} className="font-semibold text-primary underline">
+                    {BUSINESS.phone}
+                  </a>
+                  .
+                </p>
+              </div>
+            )}
+
+            <DialogFooter className="grid gap-2 sm:grid-cols-3 sm:space-x-0">
+              {checkoutResult?.status === "success" && (
+                <>
+                  <Button asChild variant="outline">
+                    <a href={confirmationEmailHref}>
+                      <Mail className="h-4 w-4" />
+                      Email Copy
+                    </a>
+                  </Button>
+                  <Button asChild variant="outline">
+                    <a href={confirmationTextHref}>
+                      <MessageSquareText className="h-4 w-4" />
+                      Text Copy
+                    </a>
+                  </Button>
+                </>
+              )}
+              <Button onClick={closeCheckoutDialog}>Done</Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="mx-auto max-w-3xl">
         <h2 className="section-title text-center text-3xl">Request an Order</h2>
         <p className="mx-auto mt-2 max-w-xl text-center text-sm text-muted-foreground">
-          Fill out the form and we’ll confirm your order. You can also call or text us at{" "}
+          Fill out the form and enter payment securely through Stripe. Your card is only authorized
+          now and is charged after the kitchen confirms. You can also call or text us at{" "}
           <a href={BUSINESS.phoneHref} className="font-semibold text-primary underline">
             {BUSINESS.phone}
           </a>
@@ -366,16 +486,12 @@ export function OrderRequestForm() {
 
           <Button type="submit" size="lg" className="w-full" disabled={isSubmitting}>
             <Send className="h-4 w-4" />
-            {isSubmitting ? "Submitting..." : "Submit Order Request"}
+            {isSubmitting ? "Opening Checkout..." : "Submit Order & Authorize Payment"}
           </Button>
 
-          {/* Placeholder — payment is NOT connected yet. Do not treat as a real checkout. */}
-          <Button type="button" variant="outline" size="lg" className="w-full" disabled>
-            Payment — Coming Soon (not connected yet)
-          </Button>
           <p className="text-center text-xs text-muted-foreground">
-            Payment will be collected before delivery once ordering is confirmed. Online payment is
-            not available yet.
+            The kitchen reviews every order before charging. If the order is declined, the card hold
+            is released.
           </p>
         </form>
       </div>

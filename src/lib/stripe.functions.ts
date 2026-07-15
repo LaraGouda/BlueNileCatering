@@ -2,12 +2,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import {
-  appendOrderToGoogleSheets,
-  listOrdersFromGoogleSheets,
-  updateOrderPaymentInGoogleSheets,
-  updateOrderStatusInGoogleSheets,
-} from "./google-sheets.server";
-import type { DashboardOrder, DashboardPaymentStatus } from "./order-store";
+  cancelAuthorizedPayment,
+  captureAuthorizedPayment,
+  createManualCaptureCheckoutSession,
+} from "./stripe.server";
+import type { DashboardOrder } from "./order-store";
 
 const orderStatusSchema = z.enum([
   "new",
@@ -72,47 +71,25 @@ const dashboardOrderSchema: z.ZodType<DashboardOrder> = z.object({
   }),
 });
 
-export const submitOrderToGoogleSheets = createServerFn({ method: "POST" })
-  .validator((data: unknown) => dashboardOrderSchema.parse(data))
-  .handler(async ({ data }) => {
-    return appendOrderToGoogleSheets(data);
-  });
-
-export const loadOrdersFromGoogleSheets = createServerFn({ method: "GET" }).handler(async () => {
-  return listOrdersFromGoogleSheets();
+const paymentActionSchema = z.object({
+  orderId: z.string().min(1),
+  paymentIntentId: z.string().min(1),
 });
 
-export const updateGoogleSheetsOrderStatus = createServerFn({ method: "POST" })
-  .validator((data: unknown) =>
-    z
-      .object({
-        orderId: z.string().min(1),
-        status: orderStatusSchema,
-      })
-      .parse(data),
-  )
+export const createStripeCheckoutSession = createServerFn({ method: "POST" })
+  .validator((data: unknown) => dashboardOrderSchema.parse(data))
   .handler(async ({ data }) => {
-    return updateOrderStatusInGoogleSheets(data.orderId, data.status);
+    return createManualCaptureCheckoutSession(data);
   });
 
-export const updateGoogleSheetsOrderPayment = createServerFn({ method: "POST" })
-  .validator((data: unknown) =>
-    z
-      .object({
-        orderId: z.string().min(1),
-        paymentStatus: paymentStatusSchema,
-        orderStatus: orderStatusSchema.optional(),
-        tax: z.number().nonnegative().optional(),
-        finalTotal: z.number().nonnegative().nullable().optional(),
-        stripeCheckoutSessionId: z.string().optional(),
-        stripePaymentIntentId: z.string().optional(),
-        stripeReceiptUrl: z.string().optional(),
-      })
-      .parse(data),
-  )
+export const captureStripeAuthorizedPayment = createServerFn({ method: "POST" })
+  .validator((data: unknown) => paymentActionSchema.parse(data))
   .handler(async ({ data }) => {
-    return updateOrderPaymentInGoogleSheets({
-      ...data,
-      paymentStatus: data.paymentStatus as DashboardPaymentStatus,
-    });
+    return captureAuthorizedPayment(data.orderId, data.paymentIntentId);
+  });
+
+export const cancelStripeAuthorizedPayment = createServerFn({ method: "POST" })
+  .validator((data: unknown) => paymentActionSchema.parse(data))
+  .handler(async ({ data }) => {
+    return cancelAuthorizedPayment(data.orderId, data.paymentIntentId);
   });
