@@ -99,6 +99,26 @@ type OrderSheetRow = {
   values: SheetValue[];
 };
 
+type SheetMetadata = {
+  sheets?: Array<{
+    properties?: {
+      sheetId?: number;
+      title?: string;
+    };
+  }>;
+};
+
+type DeleteDimensionRequest = {
+  deleteDimension: {
+    range: {
+      sheetId: number;
+      dimension: "ROWS";
+      startIndex: number;
+      endIndex: number;
+    };
+  };
+};
+
 export async function appendOrderToGoogleSheets(
   order: DashboardOrder,
 ): Promise<GoogleSheetsSubmitResult> {
@@ -160,6 +180,27 @@ export async function listOrdersFromGoogleSheets(): Promise<GoogleSheetsOrdersRe
     .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
 
   return { loadedFromGoogleSheets: true, orders };
+}
+
+export async function getOrderFromGoogleSheets(orderId: string): Promise<DashboardOrder | null> {
+  const client = await getGoogleSheetsClient();
+  if (!client) return null;
+
+  const [orderValues, orderItemValues] = await Promise.all([
+    readSheetValues(client.config.spreadsheetId, ORDERS_RANGE, client.accessToken),
+    readSheetValues(client.config.spreadsheetId, ORDER_ITEMS_RANGE, client.accessToken),
+  ]);
+
+  const [orderHeaders = [], ...orderRows] = orderValues;
+  const [orderItemHeaders = [], ...orderItemRows] = orderItemValues;
+  assertHeaders("Orders", orderHeaders, ORDER_HEADERS);
+  assertHeaders("OrderItems", orderItemHeaders, ORDER_ITEM_HEADERS);
+
+  const orderRow = orderRows.find((row) => cell(row, 0) === orderId);
+  if (!orderRow) return null;
+
+  const itemRowsByOrderId = groupOrderItemRows(orderItemRows);
+  return toDashboardOrder(orderRow, itemRowsByOrderId.get(orderId) ?? []);
 }
 
 export async function updateOrderStatusInGoogleSheets(
@@ -242,6 +283,64 @@ export async function updateOrderPaymentInGoogleSheets(
     [nextRow],
     client.accessToken,
   );
+
+  return { updatedGoogleSheets: true };
+}
+
+export async function deleteOrderFromGoogleSheets(
+  orderId: string,
+): Promise<GoogleSheetsMutationResult> {
+  const client = await getGoogleSheetsClient();
+
+  if (!client) {
+    return {
+      updatedGoogleSheets: false,
+      reason:
+        "Google Sheets is not configured. Add GOOGLE_SHEETS_SPREADSHEET_ID and service account credentials.",
+    };
+  }
+
+  const [orderValues, orderItemValues, sheetIds] = await Promise.all([
+    readSheetValues(client.config.spreadsheetId, ORDERS_RANGE, client.accessToken),
+    readSheetValues(client.config.spreadsheetId, ORDER_ITEMS_RANGE, client.accessToken),
+    readSheetIds(client.config.spreadsheetId, client.accessToken),
+  ]);
+
+  const [orderHeaders = [], ...orderRows] = orderValues;
+  const [orderItemHeaders = [], ...orderItemRows] = orderItemValues;
+  assertHeaders("Orders", orderHeaders, ORDER_HEADERS);
+  assertHeaders("OrderItems", orderItemHeaders, ORDER_ITEM_HEADERS);
+
+  const orderDataIndex = orderRows.findIndex((row) => cell(row, 0) === orderId);
+  if (orderDataIndex === -1) {
+    return {
+      updatedGoogleSheets: false,
+      reason: `Order ${orderId} was not found in Google Sheets.`,
+    };
+  }
+
+  const ordersSheetId = sheetIds.get("Orders");
+  const orderItemsSheetId = sheetIds.get("OrderItems");
+
+  if (ordersSheetId === undefined || orderItemsSheetId === undefined) {
+    return {
+      updatedGoogleSheets: false,
+      reason: "Orders or OrderItems sheet tab was not found in Google Sheets.",
+    };
+  }
+
+  const orderItemRowNumbers = orderItemRows
+    .map((row, index) => (cell(row, 0) === orderId ? index + 2 : null))
+    .filter((rowNumber): rowNumber is number => rowNumber !== null)
+    .sort((a, b) => b - a);
+  const orderRowNumber = orderDataIndex + 2;
+
+  const requests: DeleteDimensionRequest[] = [
+    ...orderItemRowNumbers.map((rowNumber) => deleteRowRequest(orderItemsSheetId, rowNumber)),
+    deleteRowRequest(ordersSheetId, orderRowNumber),
+  ];
+
+  await batchUpdateSpreadsheet(client.config.spreadsheetId, requests, client.accessToken);
 
   return { updatedGoogleSheets: true };
 }
@@ -421,6 +520,74 @@ async function updateSheetValues(
   if (!response.ok) {
     throw new Error(`Google Sheets update failed: ${await readGoogleError(response)}`);
   }
+}
+
+async function readSheetIds(spreadsheetId: string, accessToken: string) {
+  const response = await fetch(
+    `${GOOGLE_SHEETS_API_BASE}/${encodeURIComponent(
+      spreadsheetId,
+    )}?fields=sheets.properties(sheetId,title)`,
+    {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Google Sheets metadata read failed: ${await readGoogleError(response)}`);
+  }
+
+  const payload = (await response.json()) as SheetMetadata;
+  const sheetIds = new Map<string, number>();
+
+  payload.sheets?.forEach((sheet) => {
+    const title = sheet.properties?.title;
+    const sheetId = sheet.properties?.sheetId;
+    if (title && sheetId !== undefined) {
+      sheetIds.set(title, sheetId);
+    }
+  });
+
+  return sheetIds;
+}
+
+async function batchUpdateSpreadsheet(
+  spreadsheetId: string,
+  requests: DeleteDimensionRequest[],
+  accessToken: string,
+) {
+  if (requests.length === 0) return;
+
+  const response = await fetch(
+    `${GOOGLE_SHEETS_API_BASE}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ requests }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Google Sheets batch update failed: ${await readGoogleError(response)}`);
+  }
+}
+
+function deleteRowRequest(sheetId: number, rowNumber: number): DeleteDimensionRequest {
+  return {
+    deleteDimension: {
+      range: {
+        sheetId,
+        dimension: "ROWS",
+        startIndex: rowNumber - 1,
+        endIndex: rowNumber,
+      },
+    },
+  };
 }
 
 async function findOrderRow(client: GoogleSheetsClient, orderId: string) {

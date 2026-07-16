@@ -2,7 +2,13 @@ import "@tanstack/react-start/server-only";
 
 import Stripe from "stripe";
 
-import { updateOrderPaymentInGoogleSheets } from "./google-sheets.server";
+import {
+  logEmailNotificationResults,
+  sendOrderApprovedNotifications,
+  sendOrderDeclinedNotifications,
+  sendOrderSubmittedNotifications,
+} from "./email.server";
+import { getOrderFromGoogleSheets, updateOrderPaymentInGoogleSheets } from "./google-sheets.server";
 import type { DashboardOrder } from "./order-store";
 
 type StripeConfig = {
@@ -103,6 +109,8 @@ export async function captureAuthorizedPayment(
     return { completed: false, reason: sheetUpdate.reason };
   }
 
+  await notifyOrderApproved(orderId);
+
   return { completed: true };
 }
 
@@ -128,6 +136,8 @@ export async function cancelAuthorizedPayment(
   if (!sheetUpdate.updatedGoogleSheets) {
     return { completed: false, reason: sheetUpdate.reason };
   }
+
+  await notifyOrderDeclined(orderId);
 
   return { completed: true };
 }
@@ -196,30 +206,38 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) 
   const paymentIntentId = toStripeId(session.payment_intent);
   if (!orderId || !paymentIntentId) return;
 
-  await updateOrderPaymentInGoogleSheets({
+  const sheetUpdate = await updateOrderPaymentInGoogleSheets({
     orderId,
     paymentStatus: "authorized",
     stripeCheckoutSessionId: session.id,
     stripePaymentIntentId: paymentIntentId,
   });
+
+  if (sheetUpdate.updatedGoogleSheets) {
+    await notifyOrderSubmitted(orderId);
+  }
 }
 
 async function handlePaymentIntentAuthorized(paymentIntent: Stripe.PaymentIntent) {
   const orderId = paymentIntent.metadata.orderId;
   if (!orderId) return;
 
-  await updateOrderPaymentInGoogleSheets({
+  const sheetUpdate = await updateOrderPaymentInGoogleSheets({
     orderId,
     paymentStatus: "authorized",
     stripePaymentIntentId: paymentIntent.id,
   });
+
+  if (sheetUpdate.updatedGoogleSheets) {
+    await notifyOrderSubmitted(orderId);
+  }
 }
 
 async function handlePaymentIntentSucceeded(stripe: Stripe, paymentIntent: Stripe.PaymentIntent) {
   const orderId = paymentIntent.metadata.orderId;
   if (!orderId) return;
 
-  await updateOrderPaymentInGoogleSheets({
+  const sheetUpdate = await updateOrderPaymentInGoogleSheets({
     orderId,
     orderStatus: "confirmed",
     paymentStatus: "paid",
@@ -227,6 +245,10 @@ async function handlePaymentIntentSucceeded(stripe: Stripe, paymentIntent: Strip
     stripePaymentIntentId: paymentIntent.id,
     stripeReceiptUrl: await readLatestChargeReceiptUrl(stripe, paymentIntent),
   });
+
+  if (sheetUpdate.updatedGoogleSheets) {
+    await notifyOrderApproved(orderId);
+  }
 }
 
 async function handlePaymentIntentCanceled(paymentIntent: Stripe.PaymentIntent) {
@@ -249,6 +271,39 @@ async function handlePaymentIntentFailed(paymentIntent: Stripe.PaymentIntent) {
     paymentStatus: "failed",
     stripePaymentIntentId: paymentIntent.id,
   });
+}
+
+async function notifyOrderSubmitted(orderId: string) {
+  const order = await getOrderFromGoogleSheets(orderId);
+  if (!order) {
+    console.warn(`[email] order ${orderId} was not found for submitted notifications.`);
+    return;
+  }
+
+  const results = await sendOrderSubmittedNotifications(order);
+  logEmailNotificationResults("submitted", orderId, results);
+}
+
+async function notifyOrderApproved(orderId: string) {
+  const order = await getOrderFromGoogleSheets(orderId);
+  if (!order) {
+    console.warn(`[email] order ${orderId} was not found for approved notifications.`);
+    return;
+  }
+
+  const results = await sendOrderApprovedNotifications(order);
+  logEmailNotificationResults("approved", orderId, results);
+}
+
+async function notifyOrderDeclined(orderId: string) {
+  const order = await getOrderFromGoogleSheets(orderId);
+  if (!order) {
+    console.warn(`[email] order ${orderId} was not found for declined notifications.`);
+    return;
+  }
+
+  const results = await sendOrderDeclinedNotifications(order);
+  logEmailNotificationResults("declined", orderId, results);
 }
 
 function readStripeConfig(): StripeConfig | null {

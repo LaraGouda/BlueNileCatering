@@ -1,6 +1,7 @@
 import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
+import { handleOrderReminderRequest } from "./lib/email.server";
 import { renderErrorPage } from "./lib/error-page";
 import { handleStripeWebhookRequest } from "./lib/stripe.server";
 
@@ -51,6 +52,9 @@ export default {
       const url = new URL(request.url);
       if (url.pathname === "/api/stripe/webhook") {
         return handleStripeWebhookRequest(request);
+      }
+      if (url.pathname === "/api/order-reminders") {
+        return handleOrderReminderRequest(request);
       }
 
       const handler = await getServerEntry();

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   appendOrderToGoogleSheets,
+  deleteOrderFromGoogleSheets,
   listOrdersFromGoogleSheets,
   updateOrderPaymentInGoogleSheets,
   updateOrderStatusInGoogleSheets,
@@ -115,4 +116,16 @@ export const updateGoogleSheetsOrderPayment = createServerFn({ method: "POST" })
       ...data,
       paymentStatus: data.paymentStatus as DashboardPaymentStatus,
     });
+  });
+
+export const deleteGoogleSheetsOrder = createServerFn({ method: "POST" })
+  .validator((data: unknown) =>
+    z
+      .object({
+        orderId: z.string().min(1),
+      })
+      .parse(data),
+  )
+  .handler(async ({ data }) => {
+    return deleteOrderFromGoogleSheets(data.orderId);
   });

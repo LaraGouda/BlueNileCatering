@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { CheckCircle2, Mail, MessageSquareText, Send, TriangleAlert } from "lucide-react";
+import { CheckCircle2, Send, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -88,19 +88,6 @@ export function OrderRequestForm() {
     url.searchParams.delete("order");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   };
-
-  const confirmationMessage = useMemo(() => {
-    const orderLine = checkoutResult?.orderId
-      ? `My Blue Nile catering order ID is ${checkoutResult.orderId}.`
-      : "I just submitted a Blue Nile catering order.";
-
-    return `${orderLine} Please send me a confirmation when the kitchen reviews it.`;
-  }, [checkoutResult?.orderId]);
-
-  const confirmationEmailHref = `mailto:?subject=${encodeURIComponent(
-    "Blue Nile catering order confirmation",
-  )}&body=${encodeURIComponent(confirmationMessage)}`;
-  const confirmationTextHref = `sms:?&body=${encodeURIComponent(confirmationMessage)}`;
 
   const set = (field: keyof FormState) => (value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -245,7 +232,7 @@ export function OrderRequestForm() {
               </DialogTitle>
               <DialogDescription className="mx-auto max-w-sm text-center text-sm leading-6 text-muted-foreground">
                 {checkoutResult?.status === "success"
-                  ? "We received your catering request. Your card is only authorized for now, and the kitchen will review everything before charging."
+                  ? "We received your catering request and sent an email confirmation. Your card is only authorized for now, and the kitchen will review everything before charging."
                   : "Your order was not submitted for payment. You can review your cart and try again when you are ready."}
               </DialogDescription>
             </DialogHeader>
@@ -272,23 +259,7 @@ export function OrderRequestForm() {
               </div>
             )}
 
-            <DialogFooter className="grid gap-2 sm:grid-cols-3 sm:space-x-0">
-              {checkoutResult?.status === "success" && (
-                <>
-                  <Button asChild variant="outline">
-                    <a href={confirmationEmailHref}>
-                      <Mail className="h-4 w-4" />
-                      Email Copy
-                    </a>
-                  </Button>
-                  <Button asChild variant="outline">
-                    <a href={confirmationTextHref}>
-                      <MessageSquareText className="h-4 w-4" />
-                      Text Copy
-                    </a>
-                  </Button>
-                </>
-              )}
+            <DialogFooter className="justify-center sm:justify-center">
               <Button onClick={closeCheckoutDialog}>Done</Button>
             </DialogFooter>
           </div>

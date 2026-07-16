@@ -13,6 +13,7 @@ import {
   Search,
   ShieldCheck,
   ShoppingBag,
+  Trash2,
   Users,
   XCircle,
 } from "lucide-react";
@@ -26,6 +27,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   DASHBOARD_ORDER_STATUSES,
   loadDashboardOrders,
   saveDashboardOrders,
@@ -34,6 +46,7 @@ import {
   type DashboardPaymentStatus,
 } from "@/lib/order-store";
 import {
+  deleteGoogleSheetsOrder,
   loadOrdersFromGoogleSheets,
   updateGoogleSheetsOrderStatus,
 } from "@/lib/google-sheets.functions";
@@ -70,7 +83,14 @@ const PAYMENT_LABELS: Record<DashboardPaymentStatus, string> = {
   refunded: "Refunded",
 };
 
+type DashboardOrderView = DashboardOrderStatus | "all";
+
 const STATUS_OPTIONS = DASHBOARD_ORDER_STATUSES;
+const ORDER_VIEW_OPTIONS: DashboardOrderView[] = ["all", ...DASHBOARD_ORDER_STATUSES];
+const ORDER_VIEW_LABELS: Record<DashboardOrderView, string> = {
+  all: "All",
+  ...STATUS_LABELS,
+};
 
 function DashboardRoute() {
   const [unlocked, setUnlocked] = useState(false);
@@ -143,10 +163,11 @@ function DashboardLock({ onUnlock }: { onUnlock: () => void }) {
 function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
   const loadOrdersFromSheets = useServerFn(loadOrdersFromGoogleSheets);
   const updateOrderStatusOnSheets = useServerFn(updateGoogleSheetsOrderStatus);
+  const deleteOrderFromSheets = useServerFn(deleteGoogleSheetsOrder);
   const capturePaymentOnStripe = useServerFn(captureStripeAuthorizedPayment);
   const cancelPaymentOnStripe = useServerFn(cancelStripeAuthorizedPayment);
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
-  const [selectedStatus, setSelectedStatus] = useState<DashboardOrderStatus>("new");
+  const [selectedStatus, setSelectedStatus] = useState<DashboardOrderView>("new");
   const [query, setQuery] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
@@ -193,7 +214,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
   const filteredOrders = useMemo(() => {
     const q = query.trim().toLowerCase();
     return orders.filter((order) => {
-      if (order.status !== selectedStatus) return false;
+      if (selectedStatus !== "all" && order.status !== selectedStatus) return false;
       if (!q) return true;
       return (
         order.id.toLowerCase().includes(q) ||
@@ -307,6 +328,35 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
     }
   };
 
+  const deleteOrder = async (order: DashboardOrder) => {
+    const previousOrders = orders;
+    const nextOrders = orders.filter((existingOrder) => existingOrder.id !== order.id);
+
+    setOrders(nextOrders);
+    setSelectedOrderId(nextOrders[0]?.id ?? "");
+    setSavingOrderId(order.id);
+
+    try {
+      const result = await deleteOrderFromSheets({ data: { orderId: order.id } });
+
+      if (result.updatedGoogleSheets) {
+        setOrdersSource("google");
+        toast.success("Order deleted from Google Sheets.");
+      } else {
+        saveDashboardOrders(nextOrders);
+        setOrdersSource("local");
+        toast.warning(`Order deleted locally only. ${result.reason}`);
+      }
+    } catch (error) {
+      console.error("Google Sheets order delete failed:", error);
+      setOrders(previousOrders);
+      setSelectedOrderId(order.id);
+      toast.error("Could not delete the order from Google Sheets.");
+    } finally {
+      setSavingOrderId(null);
+    }
+  };
+
   return (
     <main className="min-h-screen bg-background">
       <header className="border-b border-border bg-card/95">
@@ -373,7 +423,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
                 </div>
               </div>
               <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                {STATUS_OPTIONS.map((status) => (
+                {ORDER_VIEW_OPTIONS.map((status) => (
                   <Button
                     key={status}
                     size="sm"
@@ -381,7 +431,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
                     className="shrink-0 rounded-full"
                     onClick={() => setSelectedStatus(status)}
                   >
-                    {STATUS_LABELS[status]}
+                    {ORDER_VIEW_LABELS[status]}
                   </Button>
                 ))}
               </div>
@@ -441,6 +491,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
             onStatusChange={setOrderStatus}
             onConfirmAndCharge={confirmAndChargeOrder}
             onDeclineAndRelease={declineAndReleaseOrder}
+            onDeleteOrder={deleteOrder}
           />
         </section>
       </div>
@@ -478,12 +529,14 @@ function OrderDetails({
   onStatusChange,
   onConfirmAndCharge,
   onDeclineAndRelease,
+  onDeleteOrder,
 }: {
   order: DashboardOrder | undefined;
   savingOrderId: string | null;
   onStatusChange: (orderId: string, status: DashboardOrderStatus) => void;
   onConfirmAndCharge: (order: DashboardOrder) => void;
   onDeclineAndRelease: (order: DashboardOrder) => void;
+  onDeleteOrder: (order: DashboardOrder) => void;
 }) {
   if (!order) {
     return (
@@ -700,6 +753,41 @@ function OrderDetails({
             </Button>
           ))}
         </div>
+
+        <Separator />
+
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground"
+              disabled={savingOrderId === order.id}
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete Order
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete order {order.id}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This permanently removes the order and its item rows from the dashboard storage. It
+                does not cancel, refund, or release any Stripe payment by itself.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={() => onDeleteOrder(order)}
+              >
+                Delete Order
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </CardContent>
     </Card>
   );
