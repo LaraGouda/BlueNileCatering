@@ -7,17 +7,32 @@ import { listOrdersFromGoogleSheets } from "./google-sheets.server";
 import type { DashboardOrder } from "./order-store";
 
 const REVIEW_REMINDER_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const NO_REPLY_NOTICE = "Please do not reply to this email. This inbox is not monitored.";
 
 type EmailConfig = {
   apiKey: string;
   from: string;
   replyTo: string | undefined;
   cookEmail: string | undefined;
+  websiteOwnerEmail: string | undefined;
 };
 
 type EmailSendResult = { sent: true; id: string } | { sent: false; reason: string };
 
 type NotificationResults = Record<string, EmailSendResult>;
+
+type WebsiteIssueNotification = {
+  subject: string;
+  message: string;
+  requestUrl?: string;
+  stack?: string;
+};
+
+type CustomerOrderAccessCodeEmail = {
+  email: string;
+  code: string;
+  expiresAt: string;
+};
 
 export async function sendOrderSubmittedNotifications(
   order: DashboardOrder,
@@ -111,6 +126,89 @@ export function logEmailNotificationResults(
   });
 }
 
+export async function sendWebsiteIssueNotification({
+  subject,
+  message,
+  requestUrl,
+  stack,
+}: WebsiteIssueNotification) {
+  const config = readEmailConfig();
+  if (!config.websiteOwnerEmail) {
+    return {
+      sent: false,
+      reason: "WEBSITE_OWNER_EMAIL is not configured.",
+    } satisfies EmailSendResult;
+  }
+
+  const details = [
+    ["Message", message],
+    ["URL", requestUrl ?? ""],
+    ["Time", new Date().toISOString()],
+  ].filter(([, value]) => value);
+
+  return sendEmail({
+    to: config.websiteOwnerEmail,
+    subject: `Blue Nile website alert: ${subject}`,
+    text: [
+      `Blue Nile website alert: ${subject}`,
+      "",
+      message,
+      requestUrl ? `URL: ${requestUrl}` : "",
+      `Time: ${new Date().toISOString()}`,
+      stack ? `\nStack:\n${stack}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    html: emailLayout(
+      "Website alert",
+      [escapeHtml(message)],
+      [
+        detailsTable(details as [string, string][]),
+        stack
+          ? `<h2 style="font-size:16px;margin:24px 0 8px;">Stack</h2><pre style="white-space:pre-wrap;background:#f7f4ee;border:1px solid #e5ded0;padding:12px;font-size:12px;line-height:1.4;">${escapeHtml(
+              stack,
+            )}</pre>`
+          : "",
+      ].join(""),
+    ),
+    idempotencyKey: `website-issue/${Date.now()}/${Math.random().toString(36).slice(2)}`,
+  });
+}
+
+export async function sendCustomerOrderAccessCodeEmail({
+  email,
+  code,
+  expiresAt,
+}: CustomerOrderAccessCodeEmail) {
+  const expiresAtText = formatDateTime(expiresAt);
+
+  return sendEmail({
+    to: email,
+    subject: "Your Blue Nile order verification code",
+    text: [
+      "Use this verification code to view your Blue Nile catering orders:",
+      "",
+      code,
+      "",
+      `This code expires at ${expiresAtText}.`,
+      "If you did not request this code, you can ignore this email.",
+    ].join("\n"),
+    html: emailLayout(
+      "Your order verification code",
+      [
+        "Use this verification code to view your Blue Nile catering orders:",
+        `<strong style="display:inline-block;font-size:28px;letter-spacing:6px;margin:6px 0;color:#172217;">${escapeHtml(
+          code,
+        )}</strong>`,
+        `This code expires at ${escapeHtml(expiresAtText)}.`,
+        "If you did not request this code, you can ignore this email.",
+      ],
+      "",
+    ),
+    idempotencyKey: `customer-orders-code/${email}/${Date.now()}`,
+  });
+}
+
 function sendCustomerOrderReceivedEmail(order: DashboardOrder) {
   return sendEmail({
     to: order.customer.email,
@@ -123,7 +221,7 @@ function sendCustomerOrderReceivedEmail(order: DashboardOrder) {
       "",
       orderSummaryText(order),
       "",
-      `Questions or changes? Reply to this email or call ${BUSINESS.phone}.`,
+      `Questions or changes? Call ${BUSINESS.phone}.`,
     ].join("\n"),
     html: emailLayout(
       "Thank you for your order",
@@ -182,7 +280,7 @@ function sendCustomerOrderApprovedEmail(order: DashboardOrder) {
       orderSummaryText(order),
       receiptLine,
       "",
-      `Questions or changes? Reply to this email or call ${BUSINESS.phone}.`,
+      `Questions or changes? Call ${BUSINESS.phone}.`,
     ]
       .filter(Boolean)
       .join("\n"),
@@ -233,7 +331,7 @@ function sendCustomerOrderDeclinedEmail(order: DashboardOrder) {
       "",
       orderSummaryText(order),
       "",
-      `If you would like to adjust the order or choose another time, reply to this email or call ${BUSINESS.phone}.`,
+      `If you would like to adjust the order or choose another time, call ${BUSINESS.phone}.`,
     ].join("\n"),
     html: emailLayout(
       "Your order was declined",
@@ -355,7 +453,7 @@ async function sendEmail({
         from: config.from,
         to,
         subject,
-        text,
+        text: withNoReplyNoticeText(text),
         html,
         replyTo: config.replyTo,
       },
@@ -386,6 +484,7 @@ function readEmailConfig(): EmailConfig {
     from: process.env.RESEND_FROM_EMAIL?.trim() ?? "",
     replyTo: process.env.RESEND_REPLY_TO_EMAIL?.trim() || cookEmail,
     cookEmail,
+    websiteOwnerEmail: process.env.WEBSITE_OWNER_EMAIL?.trim() || undefined,
   };
 }
 
@@ -526,8 +625,15 @@ function emailLayout(title: string, paragraphs: string[], bodyHtml: string) {
         <p style="margin:24px 0 0;color:#5f6b5f;font-size:13px;">${escapeHtml(
           BUSINESS.phone,
         )} - ${escapeHtml(BUSINESS.location)}</p>
+        <p style="margin:10px 0 0;color:#7a6f62;font-size:12px;line-height:1.45;">${escapeHtml(
+          NO_REPLY_NOTICE,
+        )}</p>
       </div>
     </div>`;
+}
+
+function withNoReplyNoticeText(text: string) {
+  return [text.trimEnd(), "", NO_REPLY_NOTICE].join("\n");
 }
 
 function dashboardText() {
@@ -574,6 +680,19 @@ function formatTime(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(2026, 0, 1, hour, minute));
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function escapeHtml(value: string) {

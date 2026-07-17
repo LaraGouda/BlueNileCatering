@@ -9,7 +9,9 @@ import {
   LogOut,
   Mail,
   MapPin,
+  PauseCircle,
   Phone,
+  PlayCircle,
   Search,
   ShieldCheck,
   ShoppingBag,
@@ -25,7 +27,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,6 +41,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DASHBOARD_ORDER_STATUSES,
   loadDashboardOrders,
@@ -54,6 +66,15 @@ import {
   cancelStripeAuthorizedPayment,
   captureStripeAuthorizedPayment,
 } from "@/lib/stripe.functions";
+import { updateServiceStatusSettings } from "@/lib/service-status.functions";
+import { useServiceStatus } from "@/lib/use-service-status";
+import {
+  DEFAULT_SERVICE_STATUS,
+  DEFAULT_SUSPENSION_MESSAGE,
+  getServiceSuspensionMessage,
+  type ServiceMessageMode,
+  type ServiceStatus,
+} from "@/lib/service-status";
 import { formatPrice } from "@/data/menu";
 import logoUrl from "@/assets/logo.png?url";
 
@@ -166,6 +187,13 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
   const deleteOrderFromSheets = useServerFn(deleteGoogleSheetsOrder);
   const capturePaymentOnStripe = useServerFn(captureStripeAuthorizedPayment);
   const cancelPaymentOnStripe = useServerFn(cancelStripeAuthorizedPayment);
+  const updateServiceStatus = useServerFn(updateServiceStatusSettings);
+  const {
+    status: serviceStatus,
+    source: serviceStatusSource,
+    fallbackReason: serviceStatusFallbackReason,
+    setServiceStatus,
+  } = useServiceStatus();
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
   const [selectedStatus, setSelectedStatus] = useState<DashboardOrderView>("new");
   const [query, setQuery] = useState("");
@@ -173,6 +201,11 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   const [savingOrderId, setSavingOrderId] = useState<string | null>(null);
   const [ordersSource, setOrdersSource] = useState<"google" | "local">("google");
+  const [serviceDialogOpen, setServiceDialogOpen] = useState(false);
+  const [serviceMessageMode, setServiceMessageMode] = useState<ServiceMessageMode>("default");
+  const [serviceCustomMessage, setServiceCustomMessage] = useState("");
+  const [serviceResumeDate, setServiceResumeDate] = useState("");
+  const [isSavingServiceStatus, setIsSavingServiceStatus] = useState(false);
 
   const refreshOrders = useCallback(async () => {
     setIsLoadingOrders(true);
@@ -357,6 +390,63 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
     }
   };
 
+  const openServiceDialog = () => {
+    const nextMode = serviceStatus.messageMode ?? DEFAULT_SERVICE_STATUS.messageMode;
+    setServiceMessageMode(nextMode);
+    setServiceCustomMessage(serviceStatus.customMessage);
+    setServiceResumeDate(serviceStatus.resumeDate);
+    setServiceDialogOpen(true);
+  };
+
+  const saveServiceAvailability = async (nextStatus: ServiceStatus) => {
+    setIsSavingServiceStatus(true);
+
+    try {
+      const result = await updateServiceStatus({ data: nextStatus });
+      setServiceStatus(nextStatus);
+
+      if (result.updatedGoogleSheets) {
+        toast.success(
+          nextStatus.suspended ? "Service suspension is live." : "Service is accepting orders.",
+        );
+      } else {
+        toast.warning(`Service status saved locally only. ${result.reason}`);
+      }
+
+      setServiceDialogOpen(false);
+    } catch (error) {
+      console.error("Service status update failed:", error);
+      toast.error("Could not update service status.");
+    } finally {
+      setIsSavingServiceStatus(false);
+    }
+  };
+
+  const suspendService = async (event: FormEvent) => {
+    event.preventDefault();
+
+    if (serviceMessageMode === "custom" && !serviceCustomMessage.trim()) {
+      toast.error("Enter a custom message or use the default message.");
+      return;
+    }
+
+    await saveServiceAvailability({
+      suspended: true,
+      messageMode: serviceMessageMode,
+      customMessage: serviceMessageMode === "custom" ? serviceCustomMessage.trim() : "",
+      resumeDate: serviceResumeDate,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const resumeService = async () => {
+    await saveServiceAvailability({
+      ...serviceStatus,
+      suspended: false,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
   return (
     <main className="min-h-screen bg-background">
       <header className="border-b border-border bg-card/95">
@@ -384,7 +474,16 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
       </header>
 
       <div className="mx-auto max-w-7xl px-4 py-6">
-        <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <ServiceAvailabilityCard
+          status={serviceStatus}
+          source={serviceStatusSource}
+          fallbackReason={serviceStatusFallbackReason}
+          isSaving={isSavingServiceStatus}
+          onSuspend={openServiceDialog}
+          onResume={resumeService}
+        />
+
+        <section className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <MetricCard icon={ShoppingBag} label="New Orders" value={String(metrics.newOrders)} />
           <MetricCard icon={CalendarClock} label="Today" value={String(metrics.todayEvents)} />
           <MetricCard icon={Clock} label="Open Orders" value={String(metrics.openOrders)} />
@@ -394,6 +493,19 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
             value={formatPrice(metrics.revenue)}
           />
         </section>
+
+        <ServiceSuspensionDialog
+          open={serviceDialogOpen}
+          messageMode={serviceMessageMode}
+          customMessage={serviceCustomMessage}
+          resumeDate={serviceResumeDate}
+          isSaving={isSavingServiceStatus}
+          onOpenChange={setServiceDialogOpen}
+          onMessageModeChange={setServiceMessageMode}
+          onCustomMessageChange={setServiceCustomMessage}
+          onResumeDateChange={setServiceResumeDate}
+          onSubmit={suspendService}
+        />
 
         <section className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
           <Card className="bg-card/95">
@@ -520,6 +632,194 @@ function MetricCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function ServiceAvailabilityCard({
+  status,
+  source,
+  fallbackReason,
+  isSaving,
+  onSuspend,
+  onResume,
+}: {
+  status: ServiceStatus;
+  source: "google" | "local";
+  fallbackReason: string;
+  isSaving: boolean;
+  onSuspend: () => void;
+  onResume: () => void;
+}) {
+  const isSuspended = status.suspended;
+  const publicMessage = getServiceSuspensionMessage(status);
+
+  return (
+    <Card className="bg-card/95">
+      <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-start gap-3">
+          <div
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${
+              isSuspended ? "bg-warning text-warning-foreground" : "bg-secondary text-primary"
+            }`}
+          >
+            {isSuspended ? <PauseCircle className="h-5 w-5" /> : <PlayCircle className="h-5 w-5" />}
+          </div>
+          <div className="min-w-0 space-y-1">
+            <h2 className="font-display text-xl text-primary">Service Availability</h2>
+            <div
+              className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-bold ${
+                isSuspended
+                  ? "bg-destructive text-destructive-foreground"
+                  : "bg-accent text-accent-foreground"
+              }`}
+            >
+              {isSuspended ? (
+                <PauseCircle className="h-4 w-4" />
+              ) : (
+                <PlayCircle className="h-4 w-4" />
+              )}
+              Current Status: {isSuspended ? "Suspended service" : "Accepting orders"}
+            </div>
+            {isSuspended && <p className="text-sm text-muted-foreground">{publicMessage}</p>}
+            {source === "local" && fallbackReason && (
+              <p className="text-xs text-destructive">Local fallback only: {fallbackReason}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {isSuspended ? (
+            <>
+              <Button variant="outline" onClick={onSuspend} disabled={isSaving}>
+                Edit Message
+              </Button>
+              <Button onClick={onResume} disabled={isSaving}>
+                <PlayCircle className="h-4 w-4" />
+                {isSaving ? "Saving..." : "Resume Service"}
+              </Button>
+            </>
+          ) : (
+            <Button onClick={onSuspend} disabled={isSaving}>
+              <PauseCircle className="h-4 w-4" />
+              Suspend Service
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ServiceSuspensionDialog({
+  open,
+  messageMode,
+  customMessage,
+  resumeDate,
+  isSaving,
+  onOpenChange,
+  onMessageModeChange,
+  onCustomMessageChange,
+  onResumeDateChange,
+  onSubmit,
+}: {
+  open: boolean;
+  messageMode: ServiceMessageMode;
+  customMessage: string;
+  resumeDate: string;
+  isSaving: boolean;
+  onOpenChange: (open: boolean) => void;
+  onMessageModeChange: (mode: ServiceMessageMode) => void;
+  onCustomMessageChange: (message: string) => void;
+  onResumeDateChange: (date: string) => void;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  const previewMessage =
+    messageMode === "custom" && customMessage.trim()
+      ? getServiceSuspensionMessage({
+          suspended: true,
+          messageMode: "custom",
+          customMessage,
+          resumeDate,
+          updatedAt: "",
+        })
+      : getServiceSuspensionMessage({
+          suspended: true,
+          messageMode: "default",
+          customMessage: "",
+          resumeDate,
+          updatedAt: "",
+        });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg bg-card">
+        <form onSubmit={onSubmit} className="space-y-5">
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl text-primary">
+              Suspend Service
+            </DialogTitle>
+            <DialogDescription>
+              Customers will see this under the navbar and in ordering popups.
+            </DialogDescription>
+          </DialogHeader>
+
+          <RadioGroup
+            value={messageMode}
+            onValueChange={(value) => onMessageModeChange(value as ServiceMessageMode)}
+            className="gap-3"
+          >
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background/70 p-3">
+              <RadioGroupItem value="default" id="service-message-default" className="mt-1" />
+              <div className="space-y-1">
+                <p className="text-sm font-semibold">Use default message</p>
+                <p className="text-sm text-muted-foreground">{DEFAULT_SUSPENSION_MESSAGE}</p>
+              </div>
+            </label>
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background/70 p-3">
+              <RadioGroupItem value="custom" id="service-message-custom" className="mt-1" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <p className="text-sm font-semibold">Write custom message</p>
+                <Textarea
+                  value={customMessage}
+                  onChange={(event) => onCustomMessageChange(event.target.value)}
+                  onFocus={() => onMessageModeChange("custom")}
+                  placeholder="Example: We are away for a family event and will reopen soon."
+                  rows={3}
+                />
+              </div>
+            </label>
+          </RadioGroup>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="service-resume-date">Return Date (optional)</Label>
+            <Input
+              id="service-resume-date"
+              type="date"
+              value={resumeDate}
+              onChange={(event) => onResumeDateChange(event.target.value)}
+            />
+          </div>
+
+          <div className="rounded-lg bg-warning p-3 text-sm text-warning-foreground">
+            {previewMessage}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={isSaving}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isSaving}>
+              <PauseCircle className="h-4 w-4" />
+              {isSaving ? "Saving..." : "Suspend Service"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

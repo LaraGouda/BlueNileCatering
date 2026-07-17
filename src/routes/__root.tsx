@@ -12,6 +12,7 @@ import { type ReactNode } from "react";
 import faviconUrl from "../assets/logo.png?url";
 import appCss from "../styles.css?url";
 import { CartProvider } from "../lib/cart-context";
+import { ServiceStatusProvider } from "../lib/service-status-context";
 import { Toaster } from "../components/ui/sonner";
 
 function NotFoundComponent() {
@@ -138,11 +139,13 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <CartProvider>
-        {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-        <Outlet />
-        <Toaster position="top-center" />
-      </CartProvider>
+      <ServiceStatusProvider>
+        <CartProvider>
+          {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+          <Outlet />
+          <Toaster position="top-center" />
+        </CartProvider>
+      </ServiceStatusProvider>
     </QueryClientProvider>
   );
 }

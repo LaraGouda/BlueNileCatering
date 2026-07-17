@@ -1,6 +1,11 @@
 import "@tanstack/react-start/server-only";
 
 import {
+  normalizeCustomerEmail,
+  toCustomerOrderView,
+  type CustomerOrderView,
+} from "./customer-orders";
+import {
   isDashboardOrderStatus,
   isDashboardPaymentStatus,
   type DashboardOrder,
@@ -8,6 +13,13 @@ import {
   type DashboardOrderStatus,
   type DashboardPaymentStatus,
 } from "./order-store";
+import {
+  DEFAULT_SERVICE_STATUS,
+  getServiceSuspensionMessage,
+  isServiceMessageMode,
+  withServiceStatusDefaults,
+  type ServiceStatus,
+} from "./service-status";
 
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -15,7 +27,13 @@ const GOOGLE_SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets";
 
 const ORDERS_RANGE = "Orders!A:X";
 const ORDER_ITEMS_RANGE = "OrderItems!A:H";
+const SERVICE_STATUS_SHEET = "ServiceStatus";
+const SERVICE_STATUS_RANGE = `${SERVICE_STATUS_SHEET}!A:E`;
+const CUSTOMER_ACCESS_CODES_SHEET = "CustomerAccessCodes";
+const CUSTOMER_ACCESS_CODES_RANGE = `${CUSTOMER_ACCESS_CODES_SHEET}!A:G`;
 const BUSINESS_NAME = "Blue Nile Mediterranean Grill";
+const CUSTOMER_ACCESS_CODE_TTL_MS = 10 * 60 * 1000;
+const MAX_CUSTOMER_ACCESS_CODE_ATTEMPTS = 5;
 
 const ORDER_HEADERS = [
   "orderId",
@@ -55,10 +73,34 @@ const ORDER_ITEM_HEADERS = [
   "lineTotal",
 ] as const;
 
+const SERVICE_STATUS_HEADERS = [
+  "suspended",
+  "messageMode",
+  "customMessage",
+  "resumeDate",
+  "updatedAt",
+] as const;
+
+const CUSTOMER_ACCESS_CODE_HEADERS = [
+  "email",
+  "codeHash",
+  "expiresAt",
+  "createdAt",
+  "usedAt",
+  "attemptCount",
+  "lastAttemptAt",
+] as const;
+
 type SheetValue = string | number | boolean;
 
 export type GoogleSheetsSubmitResult =
-  { savedToGoogleSheets: true } | { savedToGoogleSheets: false; reason: string };
+  | { savedToGoogleSheets: true }
+  | {
+      savedToGoogleSheets: false;
+      reason: string;
+      serviceSuspended?: boolean;
+      serviceStatus?: ServiceStatus;
+    };
 
 export type GoogleSheetsOrdersResult =
   | { loadedFromGoogleSheets: true; orders: DashboardOrder[] }
@@ -66,6 +108,17 @@ export type GoogleSheetsOrdersResult =
 
 export type GoogleSheetsMutationResult =
   { updatedGoogleSheets: true } | { updatedGoogleSheets: false; reason: string };
+
+export type GoogleSheetsServiceStatusResult =
+  | { loadedFromGoogleSheets: true; status: ServiceStatus }
+  | { loadedFromGoogleSheets: false; status: ServiceStatus; reason: string };
+
+export type CustomerAccessCodeCreateResult =
+  { created: true; code: string; expiresAt: string } | { created: false; reason: string };
+
+export type CustomerOrderVerificationResult =
+  | { verified: true; email: string; orders: CustomerOrderView[] }
+  | { verified: false; reason: string };
 
 export type GoogleSheetsPaymentUpdate = {
   orderId: string;
@@ -119,6 +172,16 @@ type DeleteDimensionRequest = {
   };
 };
 
+type AddSheetRequest = {
+  addSheet: {
+    properties: {
+      title: string;
+    };
+  };
+};
+
+type BatchUpdateRequest = DeleteDimensionRequest | AddSheetRequest;
+
 export async function appendOrderToGoogleSheets(
   order: DashboardOrder,
 ): Promise<GoogleSheetsSubmitResult> {
@@ -129,6 +192,16 @@ export async function appendOrderToGoogleSheets(
       savedToGoogleSheets: false,
       reason:
         "Google Sheets is not configured. Add GOOGLE_SHEETS_SPREADSHEET_ID and service account credentials.",
+    };
+  }
+
+  const serviceStatus = await loadServiceStatusWithClient(client);
+  if (serviceStatus.suspended) {
+    return {
+      savedToGoogleSheets: false,
+      reason: getServiceSuspensionMessage(serviceStatus),
+      serviceSuspended: true,
+      serviceStatus,
     };
   }
 
@@ -345,6 +418,177 @@ export async function deleteOrderFromGoogleSheets(
   return { updatedGoogleSheets: true };
 }
 
+export async function loadServiceStatusFromGoogleSheets(): Promise<GoogleSheetsServiceStatusResult> {
+  const client = await getGoogleSheetsClient();
+
+  if (!client) {
+    return {
+      loadedFromGoogleSheets: false,
+      status: DEFAULT_SERVICE_STATUS,
+      reason:
+        "Google Sheets is not configured. Add GOOGLE_SHEETS_SPREADSHEET_ID and service account credentials.",
+    };
+  }
+
+  const status = await loadServiceStatusWithClient(client);
+  return { loadedFromGoogleSheets: true, status };
+}
+
+export async function updateServiceStatusInGoogleSheets(
+  status: ServiceStatus,
+): Promise<GoogleSheetsMutationResult> {
+  const client = await getGoogleSheetsClient();
+
+  if (!client) {
+    return {
+      updatedGoogleSheets: false,
+      reason:
+        "Google Sheets is not configured. Add GOOGLE_SHEETS_SPREADSHEET_ID and service account credentials.",
+    };
+  }
+
+  await ensureServiceStatusSheet(client);
+  await updateSheetValues(
+    client.config.spreadsheetId,
+    `${SERVICE_STATUS_SHEET}!A2:E2`,
+    [toServiceStatusRow(withServiceStatusDefaults(status))],
+    client.accessToken,
+  );
+
+  return { updatedGoogleSheets: true };
+}
+
+export async function createCustomerOrderAccessCode(
+  email: string,
+): Promise<CustomerAccessCodeCreateResult> {
+  const client = await getGoogleSheetsClient();
+
+  if (!client) {
+    return {
+      created: false,
+      reason:
+        "Google Sheets is not configured. Add GOOGLE_SHEETS_SPREADSHEET_ID and service account credentials.",
+    };
+  }
+
+  const normalizedEmail = normalizeCustomerEmail(email);
+  const code = await createNumericAccessCode();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + CUSTOMER_ACCESS_CODE_TTL_MS).toISOString();
+
+  await ensureCustomerAccessCodesSheet(client);
+  await appendSheetValues(
+    client.config.spreadsheetId,
+    CUSTOMER_ACCESS_CODES_RANGE,
+    [
+      [
+        normalizedEmail,
+        await hashCustomerAccessCode(normalizedEmail, code),
+        expiresAt,
+        now.toISOString(),
+        "",
+        0,
+        "",
+      ],
+    ],
+    client.accessToken,
+  );
+
+  return { created: true, code, expiresAt };
+}
+
+export async function verifyCustomerOrderAccessCode(
+  email: string,
+  code: string,
+): Promise<CustomerOrderVerificationResult> {
+  const client = await getGoogleSheetsClient();
+
+  if (!client) {
+    return {
+      verified: false,
+      reason: "Order lookup is not configured. Please call us if you need help with your order.",
+    };
+  }
+
+  const normalizedEmail = normalizeCustomerEmail(email);
+  await ensureCustomerAccessCodesSheet(client);
+
+  const values = await readSheetValues(
+    client.config.spreadsheetId,
+    CUSTOMER_ACCESS_CODES_RANGE,
+    client.accessToken,
+  );
+  const [headers = [], ...rows] = values;
+  assertHeaders(CUSTOMER_ACCESS_CODES_SHEET, headers, CUSTOMER_ACCESS_CODE_HEADERS);
+
+  const now = Date.now();
+  const matchingRows = rows
+    .map((row, index) => ({
+      rowNumber: index + 2,
+      values: normalizeRow(row, CUSTOMER_ACCESS_CODE_HEADERS.length),
+    }))
+    .filter(({ values }) => cell(values, 0) === normalizedEmail && !cell(values, 4))
+    .sort((a, b) => new Date(cell(b.values, 3)).getTime() - new Date(cell(a.values, 3)).getTime());
+
+  const accessRow = matchingRows.find(({ values }) => {
+    const expiresAt = new Date(cell(values, 2)).getTime();
+    return Number.isFinite(expiresAt) && expiresAt >= now;
+  });
+
+  if (!accessRow) {
+    return {
+      verified: false,
+      reason: "That code is expired or invalid. Please request a new code.",
+    };
+  }
+
+  const expectedHash = cell(accessRow.values, 1);
+  const actualHash = await hashCustomerAccessCode(normalizedEmail, code);
+  const nextRow = normalizeRow(accessRow.values, CUSTOMER_ACCESS_CODE_HEADERS.length);
+  nextRow[6] = new Date().toISOString();
+
+  if (actualHash !== expectedHash) {
+    const attemptCount = numberCell(nextRow, 5) + 1;
+    nextRow[5] = attemptCount;
+    if (attemptCount >= MAX_CUSTOMER_ACCESS_CODE_ATTEMPTS) {
+      nextRow[4] = new Date().toISOString();
+    }
+
+    await updateSheetValues(
+      client.config.spreadsheetId,
+      `${CUSTOMER_ACCESS_CODES_SHEET}!A${accessRow.rowNumber}:G${accessRow.rowNumber}`,
+      [nextRow],
+      client.accessToken,
+    );
+
+    return {
+      verified: false,
+      reason: "That code is expired or invalid. Please request a new code if needed.",
+    };
+  }
+
+  nextRow[4] = new Date().toISOString();
+  await updateSheetValues(
+    client.config.spreadsheetId,
+    `${CUSTOMER_ACCESS_CODES_SHEET}!A${accessRow.rowNumber}:G${accessRow.rowNumber}`,
+    [nextRow],
+    client.accessToken,
+  );
+
+  const ordersResult = await listOrdersFromGoogleSheets();
+  if (!ordersResult.loadedFromGoogleSheets) {
+    return { verified: false, reason: ordersResult.reason };
+  }
+
+  return {
+    verified: true,
+    email: normalizedEmail,
+    orders: ordersResult.orders
+      .filter((order) => normalizeCustomerEmail(order.customer.email) === normalizedEmail)
+      .map(toCustomerOrderView),
+  };
+}
+
 async function getGoogleSheetsClient(): Promise<GoogleSheetsClient | null> {
   const config = readGoogleSheetsConfig();
   if (!config) return null;
@@ -553,9 +797,104 @@ async function readSheetIds(spreadsheetId: string, accessToken: string) {
   return sheetIds;
 }
 
+async function loadServiceStatusWithClient(client: GoogleSheetsClient): Promise<ServiceStatus> {
+  await ensureServiceStatusSheet(client);
+
+  const values = await readSheetValues(
+    client.config.spreadsheetId,
+    SERVICE_STATUS_RANGE,
+    client.accessToken,
+  );
+  const [headers = [], statusRow] = values;
+  assertHeaders(SERVICE_STATUS_SHEET, headers, SERVICE_STATUS_HEADERS);
+
+  if (!statusRow) {
+    const defaultStatus = withServiceStatusDefaults(DEFAULT_SERVICE_STATUS);
+    await updateSheetValues(
+      client.config.spreadsheetId,
+      `${SERVICE_STATUS_SHEET}!A2:E2`,
+      [toServiceStatusRow(defaultStatus)],
+      client.accessToken,
+    );
+    return defaultStatus;
+  }
+
+  return toServiceStatus(statusRow);
+}
+
+async function ensureServiceStatusSheet(client: GoogleSheetsClient) {
+  const sheetIds = await readSheetIds(client.config.spreadsheetId, client.accessToken);
+
+  if (!sheetIds.has(SERVICE_STATUS_SHEET)) {
+    await batchUpdateSpreadsheet(
+      client.config.spreadsheetId,
+      [{ addSheet: { properties: { title: SERVICE_STATUS_SHEET } } }],
+      client.accessToken,
+    );
+    await updateSheetValues(
+      client.config.spreadsheetId,
+      `${SERVICE_STATUS_SHEET}!A1:E2`,
+      [Array.from(SERVICE_STATUS_HEADERS), toServiceStatusRow(DEFAULT_SERVICE_STATUS)],
+      client.accessToken,
+    );
+    return;
+  }
+
+  const values = await readSheetValues(
+    client.config.spreadsheetId,
+    SERVICE_STATUS_RANGE,
+    client.accessToken,
+  );
+  const [headers = []] = values;
+
+  if (!headersMatch(headers, SERVICE_STATUS_HEADERS)) {
+    await updateSheetValues(
+      client.config.spreadsheetId,
+      `${SERVICE_STATUS_SHEET}!A1:E1`,
+      [Array.from(SERVICE_STATUS_HEADERS)],
+      client.accessToken,
+    );
+  }
+}
+
+async function ensureCustomerAccessCodesSheet(client: GoogleSheetsClient) {
+  const sheetIds = await readSheetIds(client.config.spreadsheetId, client.accessToken);
+
+  if (!sheetIds.has(CUSTOMER_ACCESS_CODES_SHEET)) {
+    await batchUpdateSpreadsheet(
+      client.config.spreadsheetId,
+      [{ addSheet: { properties: { title: CUSTOMER_ACCESS_CODES_SHEET } } }],
+      client.accessToken,
+    );
+    await updateSheetValues(
+      client.config.spreadsheetId,
+      `${CUSTOMER_ACCESS_CODES_SHEET}!A1:G1`,
+      [Array.from(CUSTOMER_ACCESS_CODE_HEADERS)],
+      client.accessToken,
+    );
+    return;
+  }
+
+  const values = await readSheetValues(
+    client.config.spreadsheetId,
+    CUSTOMER_ACCESS_CODES_RANGE,
+    client.accessToken,
+  );
+  const [headers = []] = values;
+
+  if (!headersMatch(headers, CUSTOMER_ACCESS_CODE_HEADERS)) {
+    await updateSheetValues(
+      client.config.spreadsheetId,
+      `${CUSTOMER_ACCESS_CODES_SHEET}!A1:G1`,
+      [Array.from(CUSTOMER_ACCESS_CODE_HEADERS)],
+      client.accessToken,
+    );
+  }
+}
+
 async function batchUpdateSpreadsheet(
   spreadsheetId: string,
-  requests: DeleteDimensionRequest[],
+  requests: BatchUpdateRequest[],
   accessToken: string,
 ) {
   if (requests.length === 0) return;
@@ -588,6 +927,27 @@ function deleteRowRequest(sheetId: number, rowNumber: number): DeleteDimensionRe
       },
     },
   };
+}
+
+async function createNumericAccessCode() {
+  const { randomInt } = await import("node:crypto");
+  return String(randomInt(100000, 1000000));
+}
+
+async function hashCustomerAccessCode(email: string, code: string) {
+  const { createHash } = await import("node:crypto");
+  return createHash("sha256")
+    .update(`${customerAccessCodeSecret()}:${email}:${code}`)
+    .digest("hex");
+}
+
+function customerAccessCodeSecret() {
+  return (
+    process.env.CUSTOMER_ORDER_ACCESS_SECRET?.trim() ||
+    process.env.ORDER_REMINDER_SECRET?.trim() ||
+    process.env.RESEND_API_KEY?.trim() ||
+    "blue-nile-customer-order-local-secret"
+  );
 }
 
 async function findOrderRow(client: GoogleSheetsClient, orderId: string) {
@@ -648,6 +1008,28 @@ function toOrderItemRows(order: DashboardOrder): SheetValue[][] {
     line.unitPrice,
     line.lineTotal,
   ]);
+}
+
+function toServiceStatusRow(status: ServiceStatus): SheetValue[] {
+  return [
+    status.suspended ? "yes" : "no",
+    status.messageMode,
+    status.customMessage,
+    status.resumeDate,
+    status.updatedAt,
+  ];
+}
+
+function toServiceStatus(row: SheetValue[]): ServiceStatus {
+  const messageMode = cell(row, 1);
+
+  return withServiceStatusDefaults({
+    suspended: parseSheetBoolean(cell(row, 0)),
+    messageMode: isServiceMessageMode(messageMode) ? messageMode : "default",
+    customMessage: cell(row, 2),
+    resumeDate: cell(row, 3),
+    updatedAt: cell(row, 4),
+  });
 }
 
 function groupOrderItemRows(rows: SheetValue[][]) {
@@ -746,6 +1128,10 @@ function assertHeaders(
   }
 }
 
+function headersMatch(actualHeaders: SheetValue[], expectedHeaders: readonly string[]) {
+  return expectedHeaders.every((expected, index) => cell(actualHeaders, index) === expected);
+}
+
 function normalizeRow(row: SheetValue[], length: number) {
   return Array.from({ length }, (_, index) => row[index] ?? "");
 }
@@ -766,6 +1152,10 @@ function nullableNumberCell(row: SheetValue[], index: number) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseSheetBoolean(value: string) {
+  return ["true", "yes", "1", "y"].includes(value.trim().toLowerCase());
 }
 
 function base64Url(value: string) {

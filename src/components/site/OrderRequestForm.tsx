@@ -30,6 +30,7 @@ import {
 import { submitOrderToGoogleSheets } from "@/lib/google-sheets.functions";
 import { createStripeCheckoutSession } from "@/lib/stripe.functions";
 import { BUSINESS, formatPrice } from "@/data/menu";
+import { useServiceStatus } from "@/lib/use-service-status";
 
 interface FormState {
   name: string;
@@ -61,6 +62,7 @@ const EMPTY_FORM: FormState = {
 
 export function OrderRequestForm() {
   const { lines, subtotal, deliveryFee, total, clear } = useCart();
+  const { status: serviceStatus, setServiceStatus, openSuspensionDialog } = useServiceStatus();
   const submitOrderToSheets = useServerFn(submitOrderToGoogleSheets);
   const createCheckoutSession = useServerFn(createStripeCheckoutSession);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -132,6 +134,11 @@ export function OrderRequestForm() {
 
     if (isSubmitting) return;
 
+    if (serviceStatus.suspended) {
+      openSuspensionDialog();
+      return;
+    }
+
     if (lines.length === 0) {
       toast.warning("Your cart is empty — add menu items before submitting.");
       return;
@@ -179,13 +186,20 @@ export function OrderRequestForm() {
     try {
       setIsSubmitting(true);
       const result = await submitOrderToSheets({ data: order });
-      saveDashboardOrder(order);
 
       if (!result.savedToGoogleSheets) {
+        if (result.serviceSuspended && result.serviceStatus) {
+          setServiceStatus(result.serviceStatus);
+          openSuspensionDialog();
+          return;
+        }
+
+        saveDashboardOrder(order);
         toast.warning(`Order captured locally only. ${result.reason}`);
         return;
       }
 
+      saveDashboardOrder(order);
       const checkoutResult = await createCheckoutSession({ data: order });
 
       if (checkoutResult.createdCheckoutSession) {
@@ -194,6 +208,12 @@ export function OrderRequestForm() {
         clear();
         window.location.assign(checkoutResult.checkoutUrl);
       } else {
+        if (checkoutResult.serviceSuspended && checkoutResult.serviceStatus) {
+          setServiceStatus(checkoutResult.serviceStatus);
+          openSuspensionDialog();
+          return;
+        }
+
         toast.error(checkoutResult.reason);
       }
     } catch (error) {

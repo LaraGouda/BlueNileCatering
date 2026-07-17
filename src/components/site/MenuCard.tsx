@@ -13,20 +13,19 @@ import {
 } from "@/components/ui/select";
 import { formatPrice, type MenuItem } from "@/data/menu";
 import { useCart } from "@/lib/cart-context";
+import { useServiceStatus } from "@/lib/use-service-status";
 
 export function MenuCard({ item }: { item: MenuItem }) {
   const { addLine } = useCart();
+  const { status: serviceStatus, openSuspensionDialog } = useServiceStatus();
 
-  const [variantLabel, setVariantLabel] = useState(
-    item.variants?.[0]?.label ?? "",
-  );
+  const [variantLabel, setVariantLabel] = useState(item.variants?.[0]?.label ?? "");
   const [singleChoices, setSingleChoices] = useState<Record<string, string>>({});
   const [addons, setAddons] = useState<Record<string, boolean>>({});
 
   const unitPrice = useMemo(() => {
     const base = item.variants
-      ? (item.variants.find((v) => v.label === variantLabel)?.price ??
-        item.variants[0].price)
+      ? (item.variants.find((v) => v.label === variantLabel)?.price ?? item.variants[0].price)
       : (item.price ?? 0);
     const addonTotal = (item.options ?? [])
       .filter((o) => o.type === "addon")
@@ -39,6 +38,11 @@ export function MenuCard({ item }: { item: MenuItem }) {
   const addonOptions = (item.options ?? []).filter((o) => o.type === "addon");
 
   const handleAdd = () => {
+    if (serviceStatus.suspended) {
+      openSuspensionDialog();
+      return;
+    }
+
     // Require a choice for every single-select option
     for (const opt of singleOptions) {
       if (!singleChoices[opt.name]) {
@@ -63,15 +67,12 @@ export function MenuCard({ item }: { item: MenuItem }) {
   const priceLabel = item.variants
     ? item.variants.map((v) => `${v.label} ${formatPrice(v.price)}`).join(" / ")
     : `${formatPrice(item.price ?? 0)}${item.unit ? ` ${item.unit}` : ""}`;
-  const servingLabel =
-    item.serves === "Serves 10" ? "Tray serves 10" : (item.serves ?? item.unit);
+  const servingLabel = item.serves === "Serves 10" ? "Tray serves 10" : (item.serves ?? item.unit);
 
   return (
     <article className="flex flex-col rounded-xl border border-border bg-card/95 p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
       <div className="flex items-start justify-between gap-3">
-        <h3 className="font-display text-base leading-snug text-primary">
-          {item.name}
-        </h3>
+        <h3 className="font-display text-base leading-snug text-primary">{item.name}</h3>
         <p className="shrink-0 text-right text-sm font-bold text-accent">
           {formatPrice(unitPrice)}
         </p>
@@ -88,9 +89,7 @@ export function MenuCard({ item }: { item: MenuItem }) {
         )}
       </div>
 
-      {item.description && (
-        <p className="mt-2 text-sm text-muted-foreground">{item.description}</p>
-      )}
+      {item.description && <p className="mt-2 text-sm text-muted-foreground">{item.description}</p>}
 
       <div className="mt-3 flex flex-1 flex-col justify-end gap-2.5">
         {item.variants && (
@@ -115,14 +114,10 @@ export function MenuCard({ item }: { item: MenuItem }) {
 
         {singleOptions.map((opt) => (
           <div key={opt.name}>
-            <Label className="mb-1 block text-xs text-muted-foreground">
-              {opt.name}
-            </Label>
+            <Label className="mb-1 block text-xs text-muted-foreground">{opt.name}</Label>
             <Select
               value={singleChoices[opt.name] ?? ""}
-              onValueChange={(v) =>
-                setSingleChoices((prev) => ({ ...prev, [opt.name]: v }))
-              }
+              onValueChange={(v) => setSingleChoices((prev) => ({ ...prev, [opt.name]: v }))}
             >
               <SelectTrigger className="h-9 w-full bg-background">
                 <SelectValue placeholder={`Choose ${opt.name.toLowerCase()}`} />
@@ -140,10 +135,7 @@ export function MenuCard({ item }: { item: MenuItem }) {
 
         {addonOptions.flatMap((opt) =>
           opt.choices.map((c) => (
-            <label
-              key={c.label}
-              className="flex cursor-pointer items-center gap-2 text-sm"
-            >
+            <label key={c.label} className="flex cursor-pointer items-center gap-2 text-sm">
               <Checkbox
                 checked={!!addons[c.label]}
                 onCheckedChange={(checked) =>
@@ -153,10 +145,7 @@ export function MenuCard({ item }: { item: MenuItem }) {
               <span>
                 {c.label}
                 {c.priceDelta ? (
-                  <span className="text-muted-foreground">
-                    {" "}
-                    (+{formatPrice(c.priceDelta)})
-                  </span>
+                  <span className="text-muted-foreground"> (+{formatPrice(c.priceDelta)})</span>
                 ) : null}
               </span>
             </label>

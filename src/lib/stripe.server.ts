@@ -8,8 +8,13 @@ import {
   sendOrderDeclinedNotifications,
   sendOrderSubmittedNotifications,
 } from "./email.server";
-import { getOrderFromGoogleSheets, updateOrderPaymentInGoogleSheets } from "./google-sheets.server";
+import {
+  getOrderFromGoogleSheets,
+  loadServiceStatusFromGoogleSheets,
+  updateOrderPaymentInGoogleSheets,
+} from "./google-sheets.server";
 import type { DashboardOrder } from "./order-store";
+import { getServiceSuspensionMessage, type ServiceStatus } from "./service-status";
 
 type StripeConfig = {
   secretKey: string;
@@ -19,13 +24,28 @@ type StripeConfig = {
 
 type StripeCheckoutResult =
   | { createdCheckoutSession: true; checkoutUrl: string; checkoutSessionId: string }
-  | { createdCheckoutSession: false; reason: string };
+  | {
+      createdCheckoutSession: false;
+      reason: string;
+      serviceSuspended?: boolean;
+      serviceStatus?: ServiceStatus;
+    };
 
 type StripePaymentActionResult = { completed: true } | { completed: false; reason: string };
 
 export async function createManualCaptureCheckoutSession(
   order: DashboardOrder,
 ): Promise<StripeCheckoutResult> {
+  const serviceStatus = await loadServiceStatusFromGoogleSheets();
+  if (serviceStatus.loadedFromGoogleSheets && serviceStatus.status.suspended) {
+    return {
+      createdCheckoutSession: false,
+      reason: getServiceSuspensionMessage(serviceStatus.status),
+      serviceSuspended: true,
+      serviceStatus: serviceStatus.status,
+    };
+  }
+
   const config = readStripeConfig();
   if (!config?.secretKey) {
     return {

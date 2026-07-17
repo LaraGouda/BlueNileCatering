@@ -5,6 +5,7 @@ import { MenuSection } from "@/components/site/MenuSection";
 import { OrderRequestForm } from "@/components/site/OrderRequestForm";
 import { CartSheet } from "@/components/site/CartSheet";
 import { Footer } from "@/components/site/Footer";
+import { ServiceSuspensionBanner } from "@/components/site/ServiceSuspensionBanner";
 import cateringBgUrl from "@/assets/catering-bg.png?url";
 
 export const Route = createFileRoute("/")({
@@ -23,6 +24,7 @@ function Index() {
       }}
     >
       <Header />
+      <ServiceSuspensionBanner />
       <main>
         <Hero />
         <MenuSection />
