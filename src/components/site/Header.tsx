@@ -6,9 +6,10 @@ import { useCart } from "@/lib/cart-context";
 import logoUrl from "@/assets/logo.png?url";
 
 const NAV_LINKS = [
-  { href: "#menu", label: "Menu" },
-  { href: "#order", label: "Order Request" },
-  { href: "#contact", label: "Contact" },
+  { href: "/#menu", label: "Menu" },
+  { href: "/#order", label: "Order Request" },
+  { href: "/policies-and-procedures", label: "Policies" },
+  { href: "/#contact", label: "Contact" },
 ];
 
 export function Header() {
@@ -18,7 +19,7 @@ export function Header() {
   return (
     <header className="sticky top-0 z-40 border-b border-border/70 bg-background/90 backdrop-blur">
       <div className="mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-2.5 sm:flex sm:justify-between">
-        <a href="#top" className="flex min-w-0 items-center gap-2.5">
+        <a href="/#top" className="flex min-w-0 items-center gap-2.5">
           <img
             src={logoUrl}
             alt="Blue Nile Mediterranean Grill palm tree logo"

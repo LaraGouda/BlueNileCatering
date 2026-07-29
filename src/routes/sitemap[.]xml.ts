@@ -7,14 +7,7 @@ const BASE_URL = "";
 interface SitemapEntry {
   path: string;
   lastmod?: string;
-  changefreq?:
-    | "always"
-    | "hourly"
-    | "daily"
-    | "weekly"
-    | "monthly"
-    | "yearly"
-    | "never";
+  changefreq?: "always" | "hourly" | "daily" | "weekly" | "monthly" | "yearly" | "never";
   priority?: string;
 }
 
@@ -24,6 +17,7 @@ export const Route = createFileRoute("/sitemap.xml")({
       GET: async () => {
         const entries: SitemapEntry[] = [
           { path: "/", changefreq: "weekly", priority: "1.0" },
+          { path: "/policies-and-procedures", changefreq: "monthly", priority: "0.8" },
         ];
 
         const urls = entries.map((e) =>

@@ -1,4 +1,4 @@
-import { Phone, MapPin } from "lucide-react";
+import { FileText, MapPin, Phone } from "lucide-react";
 import { BUSINESS } from "@/data/menu";
 import logoUrl from "@/assets/logo.png?url";
 
@@ -8,7 +8,7 @@ export function Footer() {
       id="contact"
       className="scroll-mt-20 border-t border-border bg-primary text-primary-foreground"
     >
-      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-4 py-10 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-4 py-10 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-start">
         <div>
           <div className="flex items-center gap-2.5">
             <img
@@ -34,6 +34,18 @@ export function Footer() {
             <li className="flex items-center gap-2">
               <MapPin className="h-4 w-4 shrink-0" />
               {BUSINESS.location}
+            </li>
+          </ul>
+        </div>
+
+        <div>
+          <h3 className="font-display text-base">Policies</h3>
+          <ul className="mt-3 space-y-2 text-sm text-primary-foreground/85">
+            <li className="flex items-center gap-2">
+              <FileText className="h-4 w-4 shrink-0" />
+              <a href="/policies-and-procedures" className="hover:underline">
+                Policies & Procedures
+              </a>
             </li>
           </ul>
         </div>
