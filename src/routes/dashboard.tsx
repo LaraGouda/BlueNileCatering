@@ -66,6 +66,7 @@ import {
   cancelStripeAuthorizedPayment,
   captureStripeAuthorizedPayment,
 } from "@/lib/stripe.functions";
+import { verifyDashboardPin } from "@/lib/dashboard-auth.functions";
 import { updateServiceStatusSettings } from "@/lib/service-status.functions";
 import { useServiceStatus } from "@/lib/use-service-status";
 import {
@@ -83,7 +84,6 @@ export const Route = createFileRoute("/dashboard")({
 });
 
 const DASHBOARD_SESSION_KEY = "blue-nile-dashboard-unlocked";
-const DASHBOARD_PIN = import.meta.env.VITE_OWNER_DASHBOARD_PIN?.trim() ?? "";
 
 const STATUS_LABELS: Record<DashboardOrderStatus, string> = {
   new: "New",
@@ -133,20 +133,30 @@ function DashboardRoute() {
 }
 
 function DashboardLock({ onUnlock }: { onUnlock: () => void }) {
+  const verifyPin = useServerFn(verifyDashboardPin);
   const [pin, setPin] = useState("");
+  const [isChecking, setIsChecking] = useState(false);
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!DASHBOARD_PIN) {
-      toast.error("Dashboard passcode is not configured.");
-      return;
+
+    try {
+      setIsChecking(true);
+      const result = await verifyPin({ data: { pin } });
+
+      if (result.verified) {
+        window.sessionStorage.setItem(DASHBOARD_SESSION_KEY, "true");
+        onUnlock();
+        return;
+      }
+
+      toast.error(result.reason);
+    } catch (error) {
+      console.error("Dashboard passcode verification failed:", error);
+      toast.error("Could not verify the passcode.");
+    } finally {
+      setIsChecking(false);
     }
-    if (pin === DASHBOARD_PIN) {
-      window.sessionStorage.setItem(DASHBOARD_SESSION_KEY, "true");
-      onUnlock();
-      return;
-    }
-    toast.error("Incorrect passcode.");
   };
 
   return (
@@ -170,9 +180,9 @@ function DashboardLock({ onUnlock }: { onUnlock: () => void }) {
                 autoFocus
               />
             </div>
-            <Button type="submit" className="w-full">
+            <Button type="submit" className="w-full" disabled={isChecking}>
               <ShieldCheck className="h-4 w-4" />
-              Enter Dashboard
+              {isChecking ? "Checking..." : "Enter Dashboard"}
             </Button>
           </form>
         </CardContent>

@@ -40,6 +40,7 @@ RESEND_FROM_EMAIL="Blue Nile Catering <orders@yourdomain.com>"
 RESEND_REPLY_TO_EMAIL=website@yourdomain.com
 COOK_ORDER_EMAIL=cook@example.com
 WEBSITE_OWNER_EMAIL=website@example.com
+OWNER_DASHBOARD_PIN=use-a-private-pin
 CUSTOMER_ORDER_ACCESS_SECRET=use-a-long-random-secret
 ORDER_REMINDER_SECRET=use-a-long-random-secret
 PUBLIC_SITE_URL=https://your-live-site.com
