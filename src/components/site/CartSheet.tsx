@@ -1,6 +1,7 @@
 import { Minus, Plus, Trash2, TriangleAlert, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Sheet,
   SheetContent,
@@ -35,62 +36,71 @@ export function CartSheet() {
             </p>
           ) : (
             <ul className="space-y-4 py-2">
-              {lines.map((line) => (
-                <li key={line.key} className="rounded-lg border border-border bg-card p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold">{line.name}</p>
-                      {line.selections.length > 0 && (
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {line.selections.join(" · ")}
-                        </p>
-                      )}
+              {lines.map((line, index) => {
+                const noteInputId = `cart-item-note-${index}`;
+
+                return (
+                  <li key={line.key} className="rounded-lg border border-border bg-card p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold">{line.name}</p>
+                        {line.selections.length > 0 && (
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {line.selections.join(" · ")}
+                          </p>
+                        )}
+                      </div>
+                      <p className="shrink-0 text-sm font-bold text-accent">
+                        {formatPrice(line.unitPrice * line.qty)}
+                      </p>
                     </div>
-                    <p className="shrink-0 text-sm font-bold text-accent">
-                      {formatPrice(line.unitPrice * line.qty)}
-                    </p>
-                  </div>
 
-                  <div className="mt-2 flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => setQty(line.key, line.qty - 1)}
-                      aria-label={`Decrease quantity of ${line.name}`}
-                    >
-                      <Minus className="h-3.5 w-3.5" />
-                    </Button>
-                    <span className="w-6 text-center text-sm font-semibold">{line.qty}</span>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => setQty(line.key, line.qty + 1)}
-                      aria-label={`Increase quantity of ${line.name}`}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="ml-auto h-7 w-7 text-destructive"
-                      onClick={() => removeLine(line.key)}
-                      aria-label={`Remove ${line.name} from cart`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => setQty(line.key, line.qty - 1)}
+                        aria-label={`Decrease quantity of ${line.name}`}
+                      >
+                        <Minus className="h-3.5 w-3.5" />
+                      </Button>
+                      <span className="w-6 text-center text-sm font-semibold">{line.qty}</span>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => setQty(line.key, line.qty + 1)}
+                        aria-label={`Increase quantity of ${line.name}`}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="ml-auto h-7 w-7 text-destructive"
+                        onClick={() => removeLine(line.key)}
+                        aria-label={`Remove ${line.name} from cart`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
 
-                  <Input
-                    className="mt-2 h-8 bg-background text-xs"
-                    placeholder="Notes for this item (optional)"
-                    value={line.notes}
-                    onChange={(e) => setNotes(line.key, e.target.value)}
-                    maxLength={300}
-                  />
-                </li>
-              ))}
+                    <Label htmlFor={noteInputId} className="sr-only">
+                      Notes for {line.name}
+                    </Label>
+                    <Input
+                      id={noteInputId}
+                      name={noteInputId}
+                      className="mt-2 h-8 bg-background text-xs"
+                      placeholder="Notes for this item (optional)"
+                      value={line.notes}
+                      onChange={(e) => setNotes(line.key, e.target.value)}
+                      maxLength={300}
+                    />
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

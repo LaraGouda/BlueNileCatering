@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { CATEGORIES, MENU_ITEMS } from "@/data/menu";
 import { MenuCard } from "./MenuCard";
@@ -37,7 +38,8 @@ export function MenuSection() {
             className="font-semibold text-primary underline underline-offset-4 hover:text-primary/80"
           >
             here
-          </a>.
+          </a>
+          .
         </p>
 
         <div className="mt-6 rounded-2xl border border-border bg-card/95 p-4 shadow-sm transition-all duration-300 ease-out sm:p-5 lg:grid lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-5">
@@ -70,11 +72,16 @@ export function MenuSection() {
 
           <div className="mt-4 min-w-0 lg:mt-0">
             <div className="relative">
+              <Label htmlFor="menu-search" className="sr-only">
+                Search menu items
+              </Label>
               <Search
                 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
                 aria-hidden="true"
               />
               <Input
+                id="menu-search"
+                name="menuSearch"
                 type="search"
                 placeholder="Search the menu…"
                 className="bg-background pl-9"

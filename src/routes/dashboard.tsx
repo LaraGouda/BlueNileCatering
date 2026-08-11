@@ -594,11 +594,16 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
                   </CardDescription>
                 </div>
                 <div className="relative w-full lg:max-w-xs">
+                  <Label htmlFor="dashboard-order-search" className="sr-only">
+                    Search dashboard orders
+                  </Label>
                   <Search
                     className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
                     aria-hidden="true"
                   />
                   <Input
+                    id="dashboard-order-search"
+                    name="dashboardOrderSearch"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder="Search orders"
@@ -859,18 +864,27 @@ function ServiceSuspensionDialog({
             onValueChange={(value) => onMessageModeChange(value as ServiceMessageMode)}
             className="gap-3"
           >
-            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background/70 p-3">
+            <div className="flex items-start gap-3 rounded-lg border border-border bg-background/70 p-3">
               <RadioGroupItem value="default" id="service-message-default" className="mt-1" />
               <div className="space-y-1">
-                <p className="text-sm font-semibold">Use default message</p>
+                <Label htmlFor="service-message-default" className="cursor-pointer font-semibold">
+                  Use default message
+                </Label>
                 <p className="text-sm text-muted-foreground">{DEFAULT_SUSPENSION_MESSAGE}</p>
               </div>
-            </label>
-            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background/70 p-3">
+            </div>
+            <div className="flex items-start gap-3 rounded-lg border border-border bg-background/70 p-3">
               <RadioGroupItem value="custom" id="service-message-custom" className="mt-1" />
               <div className="min-w-0 flex-1 space-y-2">
-                <p className="text-sm font-semibold">Write custom message</p>
+                <Label htmlFor="service-message-custom" className="cursor-pointer font-semibold">
+                  Write custom message
+                </Label>
+                <Label htmlFor="service-custom-message" className="sr-only">
+                  Custom service suspension message
+                </Label>
                 <Textarea
+                  id="service-custom-message"
+                  name="serviceCustomMessage"
                   value={customMessage}
                   onChange={(event) => onCustomMessageChange(event.target.value)}
                   onFocus={() => onMessageModeChange("custom")}
@@ -878,7 +892,7 @@ function ServiceSuspensionDialog({
                   rows={3}
                 />
               </div>
-            </label>
+            </div>
           </RadioGroup>
 
           <div className="space-y-2 rounded-lg border border-border bg-background/70 p-3">
@@ -896,8 +910,12 @@ function ServiceSuspensionDialog({
                 >
                   Add a return date
                 </Label>
+                <Label htmlFor="service-resume-date" className="sr-only">
+                  Service return date
+                </Label>
                 <Input
                   id="service-resume-date"
+                  name="serviceResumeDate"
                   type="date"
                   value={resumeDate}
                   onChange={(event) => onResumeDateChange(event.target.value)}
