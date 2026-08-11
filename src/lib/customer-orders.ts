@@ -12,6 +12,7 @@ export interface CustomerOrderView {
     deliveryAddressLine2: string;
     zipCode: string;
     numberOfPeople: number;
+    paperSupplies: boolean;
     individuallyWrapped: boolean;
     specialInstructions: string;
   };

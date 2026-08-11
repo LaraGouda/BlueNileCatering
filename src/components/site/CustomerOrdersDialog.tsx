@@ -32,6 +32,7 @@ const ORDER_STATUS_LABELS: Record<CustomerOrderView["status"], string> = {
   ready: "Ready",
   completed: "Completed",
   declined: "Declined",
+  canceled: "Canceled",
 };
 
 const PAYMENT_STATUS_LABELS: Record<CustomerOrderView["paymentStatus"], string> = {
@@ -95,7 +96,9 @@ export function CustomerOrdersDialog({
 
       setEmail(normalizedEmail);
       setStep("code");
-      toast.success("If we found orders for that email, we sent a verification code.");
+      toast.success(
+        "If we found orders for that email, we sent a verification code. Check your inbox and spam folder.",
+      );
       return true;
     } catch (error) {
       console.error("Customer order code request failed:", error);
@@ -174,7 +177,8 @@ export function CustomerOrdersDialog({
                   />
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  We will send a 6-digit code if this email can receive messages.
+                  We will send a 6-digit code if this email can receive messages. Check your inbox
+                  and spam folder.
                 </p>
                 <Button type="submit" disabled={isSendingCode} className="w-full">
                   <Mail className="h-4 w-4" />
@@ -188,7 +192,7 @@ export function CustomerOrdersDialog({
                 <div className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
                   If we found orders for{" "}
                   <span className="font-semibold text-foreground">{email}</span>, we sent a
-                  verification code.
+                  verification code. Check your inbox and spam folder.
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="customer-orders-code">Verification Code</Label>

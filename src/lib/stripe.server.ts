@@ -6,6 +6,7 @@ import {
   logEmailNotificationResults,
   sendOrderApprovedNotifications,
   sendOrderDeclinedNotifications,
+  sendOrderPaymentFailedNotifications,
   sendOrderSubmittedNotifications,
 } from "./email.server";
 import {
@@ -162,6 +163,71 @@ export async function cancelAuthorizedPayment(
   return { completed: true };
 }
 
+export async function refundCapturedPayment(
+  orderId: string,
+  paymentIntentId: string,
+  refundAmount?: number,
+): Promise<StripePaymentActionResult> {
+  const config = readStripeConfig();
+  if (!config?.secretKey) {
+    return { completed: false, reason: "Stripe is not configured. Add STRIPE_SECRET_KEY to .env." };
+  }
+
+  const stripe = createStripeClient(config.secretKey);
+  const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+  const capturedAmountCents = paymentIntent.amount_received;
+
+  if (paymentIntent.status !== "succeeded" || capturedAmountCents <= 0) {
+    return {
+      completed: false,
+      reason: "Stripe has not captured this payment yet. Use Decline & Release before approval.",
+    };
+  }
+
+  const refundAmountCents =
+    refundAmount === undefined ? capturedAmountCents : dollarsToCents(refundAmount);
+
+  if (refundAmountCents <= 0) {
+    return { completed: false, reason: "Refund amount must be greater than $0." };
+  }
+
+  if (refundAmountCents > capturedAmountCents) {
+    return { completed: false, reason: "Refund amount cannot be more than the captured payment." };
+  }
+
+  const refundParams: Stripe.RefundCreateParams = {
+    payment_intent: paymentIntentId,
+    reason: "requested_by_customer",
+    metadata: {
+      orderId,
+    },
+  };
+
+  if (refundAmountCents < capturedAmountCents) {
+    refundParams.amount = refundAmountCents;
+  }
+
+  const refund = await stripe.refunds.create(refundParams);
+
+  if (refund.status === "failed" || refund.status === "canceled") {
+    return { completed: false, reason: `Stripe refund did not complete: ${refund.status}.` };
+  }
+
+  const sheetUpdate = await updateOrderPaymentInGoogleSheets({
+    orderId,
+    orderStatus: "canceled",
+    paymentStatus: "refunded",
+    finalTotal: centsToDollars(capturedAmountCents - refundAmountCents),
+    stripePaymentIntentId: paymentIntent.id,
+  });
+
+  if (!sheetUpdate.updatedGoogleSheets) {
+    return { completed: false, reason: sheetUpdate.reason };
+  }
+
+  return { completed: true };
+}
+
 export async function handleStripeWebhookRequest(request: Request) {
   if (request.method !== "POST") {
     return jsonResponse({ error: "Method not allowed." }, 405);
@@ -286,11 +352,15 @@ async function handlePaymentIntentFailed(paymentIntent: Stripe.PaymentIntent) {
   const orderId = paymentIntent.metadata.orderId;
   if (!orderId) return;
 
-  await updateOrderPaymentInGoogleSheets({
+  const sheetUpdate = await updateOrderPaymentInGoogleSheets({
     orderId,
     paymentStatus: "failed",
     stripePaymentIntentId: paymentIntent.id,
   });
+
+  if (sheetUpdate.updatedGoogleSheets) {
+    await notifyOrderPaymentFailed(orderId);
+  }
 }
 
 async function notifyOrderSubmitted(orderId: string) {
@@ -324,6 +394,17 @@ async function notifyOrderDeclined(orderId: string) {
 
   const results = await sendOrderDeclinedNotifications(order);
   logEmailNotificationResults("declined", orderId, results);
+}
+
+async function notifyOrderPaymentFailed(orderId: string) {
+  const order = await getOrderFromGoogleSheets(orderId);
+  if (!order) {
+    console.warn(`[email] order ${orderId} was not found for payment failed notifications.`);
+    return;
+  }
+
+  const results = await sendOrderPaymentFailedNotifications(order);
+  logEmailNotificationResults("payment failed", orderId, results);
 }
 
 function readStripeConfig(): StripeConfig | null {

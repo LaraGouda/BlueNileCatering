@@ -19,7 +19,15 @@ export function Footer() {
             />
             <p className="font-display text-lg">{BUSINESS.name}</p>
           </div>
-          <p className="mt-3 text-sm text-primary-foreground/80">{BUSINESS.about}</p>
+          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-primary-foreground/80">
+            <li>{BUSINESS.about}</li>
+            <li>
+              Made by Lara Gouda.{" "}
+              <a href="mailto:laragoudaw@gmail.com" className="hover:underline">
+                laragoudaw@gmail.com
+              </a>
+            </li>
+          </ul>
         </div>
 
         <div>
@@ -51,7 +59,7 @@ export function Footer() {
         </div>
       </div>
       <div className="border-t border-primary-foreground/15 px-4 py-4 text-center text-xs text-primary-foreground/70">
-        © {new Date().getFullYear()} {BUSINESS.name}. Family-owned since 2019.
+        © {new Date().getFullYear()} {BUSINESS.name}.
       </div>
     </footer>
   );

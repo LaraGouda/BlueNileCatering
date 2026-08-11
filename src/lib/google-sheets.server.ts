@@ -25,15 +25,19 @@ const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets";
 
-const ORDERS_RANGE = "Orders!A:X";
+const ORDERS_RANGE = "Orders!A:Y";
 const ORDER_ITEMS_RANGE = "OrderItems!A:H";
 const SERVICE_STATUS_SHEET = "ServiceStatus";
 const SERVICE_STATUS_RANGE = `${SERVICE_STATUS_SHEET}!A:E`;
 const CUSTOMER_ACCESS_CODES_SHEET = "CustomerAccessCodes";
 const CUSTOMER_ACCESS_CODES_RANGE = `${CUSTOMER_ACCESS_CODES_SHEET}!A:G`;
 const BUSINESS_NAME = "Blue Nile Mediterranean Grill";
+const PAPER_SUPPLIES_ITEM = "Paper Plates, Serving Spoons, Forks, Napkins";
 const CUSTOMER_ACCESS_CODE_TTL_MS = 10 * 60 * 1000;
 const MAX_CUSTOMER_ACCESS_CODE_ATTEMPTS = 5;
+const DATABASE_TEXT_COLOR = { red: 0, green: 0, blue: 0 };
+const DATABASE_ROW_WHITE = { red: 1, green: 1, blue: 1 };
+const DATABASE_ROW_LIGHT_BLUE = { red: 0.9, green: 0.96, blue: 1 };
 
 const ORDER_HEADERS = [
   "orderId",
@@ -60,6 +64,7 @@ const ORDER_HEADERS = [
   "stripeCheckoutSessionId",
   "stripePaymentIntentId",
   "stripeReceiptUrl",
+  "paperSupplies",
 ] as const;
 
 const ORDER_ITEM_HEADERS = [
@@ -71,6 +76,11 @@ const ORDER_ITEM_HEADERS = [
   "notes",
   "unitPrice",
   "lineTotal",
+] as const;
+
+const DATABASE_SHEET_FORMATS = [
+  { title: "Orders", range: ORDERS_RANGE, columnCount: ORDER_HEADERS.length },
+  { title: "OrderItems", range: ORDER_ITEMS_RANGE, columnCount: ORDER_ITEM_HEADERS.length },
 ] as const;
 
 const SERVICE_STATUS_HEADERS = [
@@ -180,7 +190,36 @@ type AddSheetRequest = {
   };
 };
 
-type BatchUpdateRequest = DeleteDimensionRequest | AddSheetRequest;
+type SheetColor = {
+  red: number;
+  green: number;
+  blue: number;
+};
+
+type SheetCellFormat = {
+  backgroundColor?: SheetColor;
+  textFormat?: {
+    foregroundColor: SheetColor;
+  };
+};
+
+type RepeatCellRequest = {
+  repeatCell: {
+    range: {
+      sheetId: number;
+      startRowIndex: number;
+      endRowIndex: number;
+      startColumnIndex: number;
+      endColumnIndex: number;
+    };
+    cell: {
+      userEnteredFormat: SheetCellFormat;
+    };
+    fields: string;
+  };
+};
+
+type BatchUpdateRequest = DeleteDimensionRequest | AddSheetRequest | RepeatCellRequest;
 
 export async function appendOrderToGoogleSheets(
   order: DashboardOrder,
@@ -221,7 +260,25 @@ export async function appendOrderToGoogleSheets(
     );
   }
 
+  await tryFormatOrderDatabaseSheets(client);
+
   return { savedToGoogleSheets: true };
+}
+
+export async function formatOrderDatabaseSheets(): Promise<GoogleSheetsMutationResult> {
+  const client = await getGoogleSheetsClient();
+
+  if (!client) {
+    return {
+      updatedGoogleSheets: false,
+      reason:
+        "Google Sheets is not configured. Add GOOGLE_SHEETS_SPREADSHEET_ID and service account credentials.",
+    };
+  }
+
+  await formatOrderDatabaseSheetsWithClient(client);
+
+  return { updatedGoogleSheets: true };
 }
 
 export async function listOrdersFromGoogleSheets(): Promise<GoogleSheetsOrdersResult> {
@@ -304,10 +361,12 @@ export async function updateOrderStatusInGoogleSheets(
 
   await updateSheetValues(
     client.config.spreadsheetId,
-    `Orders!A${orderRow.rowNumber}:X${orderRow.rowNumber}`,
+    `Orders!A${orderRow.rowNumber}:Y${orderRow.rowNumber}`,
     [nextRow],
     client.accessToken,
   );
+
+  await tryFormatOrderDatabaseSheets(client);
 
   return { updatedGoogleSheets: true };
 }
@@ -352,10 +411,12 @@ export async function updateOrderPaymentInGoogleSheets(
 
   await updateSheetValues(
     client.config.spreadsheetId,
-    `Orders!A${orderRow.rowNumber}:X${orderRow.rowNumber}`,
+    `Orders!A${orderRow.rowNumber}:Y${orderRow.rowNumber}`,
     [nextRow],
     client.accessToken,
   );
+
+  await tryFormatOrderDatabaseSheets(client);
 
   return { updatedGoogleSheets: true };
 }
@@ -414,6 +475,7 @@ export async function deleteOrderFromGoogleSheets(
   ];
 
   await batchUpdateSpreadsheet(client.config.spreadsheetId, requests, client.accessToken);
+  await tryFormatOrderDatabaseSheets(client);
 
   return { updatedGoogleSheets: true };
 }
@@ -797,6 +859,96 @@ async function readSheetIds(spreadsheetId: string, accessToken: string) {
   return sheetIds;
 }
 
+async function tryFormatOrderDatabaseSheets(client: GoogleSheetsClient) {
+  try {
+    await formatOrderDatabaseSheetsWithClient(client);
+  } catch (error) {
+    console.error("Google Sheets database formatting failed:", error);
+  }
+}
+
+async function formatOrderDatabaseSheetsWithClient(client: GoogleSheetsClient) {
+  const [sheetIds, ...sheetValues] = await Promise.all([
+    readSheetIds(client.config.spreadsheetId, client.accessToken),
+    ...DATABASE_SHEET_FORMATS.map((sheet) =>
+      readSheetValues(client.config.spreadsheetId, sheet.range, client.accessToken),
+    ),
+  ]);
+
+  const requests = DATABASE_SHEET_FORMATS.flatMap((sheet, index) => {
+    const sheetId = sheetIds.get(sheet.title);
+    if (sheetId === undefined) return [];
+
+    const rowCount = Math.max(sheetValues[index]?.length ?? 0, 1);
+    return databaseSheetFormatRequests(sheetId, rowCount, sheet.columnCount);
+  });
+
+  await batchUpdateSpreadsheet(client.config.spreadsheetId, requests, client.accessToken);
+}
+
+function databaseSheetFormatRequests(
+  sheetId: number,
+  rowCount: number,
+  columnCount: number,
+): RepeatCellRequest[] {
+  const requests: RepeatCellRequest[] = [
+    repeatCellRequest(
+      sheetId,
+      0,
+      rowCount,
+      columnCount,
+      {
+        textFormat: {
+          foregroundColor: DATABASE_TEXT_COLOR,
+        },
+      },
+      "userEnteredFormat.textFormat.foregroundColor",
+    ),
+  ];
+
+  for (let rowIndex = 1; rowIndex < rowCount; rowIndex += 1) {
+    requests.push(
+      repeatCellRequest(
+        sheetId,
+        rowIndex,
+        rowIndex + 1,
+        columnCount,
+        {
+          backgroundColor: rowIndex % 2 === 1 ? DATABASE_ROW_WHITE : DATABASE_ROW_LIGHT_BLUE,
+        },
+        "userEnteredFormat.backgroundColor",
+      ),
+    );
+  }
+
+  return requests;
+}
+
+function repeatCellRequest(
+  sheetId: number,
+  startRowIndex: number,
+  endRowIndex: number,
+  columnCount: number,
+  userEnteredFormat: SheetCellFormat,
+  fields: string,
+): RepeatCellRequest {
+  return {
+    repeatCell: {
+      range: {
+        sheetId,
+        startRowIndex,
+        endRowIndex,
+        startColumnIndex: 0,
+        endColumnIndex: columnCount,
+      },
+      cell: {
+        userEnteredFormat,
+      },
+      fields,
+    },
+  };
+}
+
 async function loadServiceStatusWithClient(client: GoogleSheetsClient): Promise<ServiceStatus> {
   await ensureServiceStatusSheet(client);
 
@@ -994,6 +1146,7 @@ function toOrderRow(order: DashboardOrder): SheetValue[] {
     order.payment.stripeCheckoutSessionId,
     order.payment.stripePaymentIntentId,
     order.payment.stripeReceiptUrl,
+    order.event.paperSupplies ? "yes" : "no",
   ];
 }
 
@@ -1058,6 +1211,10 @@ function groupOrderItemRows(rows: SheetValue[][]) {
   return itemRowsByOrderId;
 }
 
+function hasOrderItem(cart: DashboardOrderLine[], itemName: string) {
+  return cart.some((line) => line.item.trim().toLowerCase() === itemName.toLowerCase());
+}
+
 function toDashboardOrder(row: SheetValue[], cart: DashboardOrderLine[]): DashboardOrder | null {
   const id = cell(row, 0);
   if (!id) return null;
@@ -1088,6 +1245,7 @@ function toDashboardOrder(row: SheetValue[], cart: DashboardOrderLine[]): Dashbo
       deliveryAddressLine2: cell(row, 11),
       zipCode: cell(row, 12),
       numberOfPeople: numberCell(row, 13),
+      paperSupplies: parseSheetBoolean(cell(row, 24)) || hasOrderItem(cart, PAPER_SUPPLIES_ITEM),
       individuallyWrapped: cell(row, 14).toLowerCase() === "yes",
       specialInstructions: cell(row, 15),
     },
@@ -1115,9 +1273,24 @@ function assertHeaders(
   actualHeaders: SheetValue[],
   expectedHeaders: readonly string[],
 ) {
-  const missingOrMoved = expectedHeaders.filter(
+  const checkedHeaders =
+    sheetName === "Orders" && expectedHeaders === ORDER_HEADERS
+      ? expectedHeaders.slice(0, -1)
+      : expectedHeaders;
+  const missingOrMoved = checkedHeaders.filter(
     (expected, index) => cell(actualHeaders, index) !== expected,
   );
+  const optionalPaperSuppliesHeader =
+    sheetName === "Orders" && expectedHeaders === ORDER_HEADERS
+      ? cell(actualHeaders, ORDER_HEADERS.length - 1)
+      : "";
+
+  if (
+    optionalPaperSuppliesHeader &&
+    optionalPaperSuppliesHeader !== ORDER_HEADERS[ORDER_HEADERS.length - 1]
+  ) {
+    missingOrMoved.push(ORDER_HEADERS[ORDER_HEADERS.length - 1]);
+  }
 
   if (missingOrMoved.length > 0) {
     throw new Error(
@@ -1142,16 +1315,25 @@ function cell(row: SheetValue[], index: number) {
 }
 
 function numberCell(row: SheetValue[], index: number) {
-  const value = Number(cell(row, index));
-  return Number.isFinite(value) ? value : 0;
+  return parseSheetNumber(cell(row, index)) ?? 0;
 }
 
 function nullableNumberCell(row: SheetValue[], index: number) {
-  const value = cell(row, index);
+  return parseSheetNumber(cell(row, index));
+}
+
+function parseSheetNumber(value: string) {
   if (!value) return null;
 
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (Number.isFinite(parsed)) return parsed;
+
+  const accountingValue = value.match(/^\((.*)\)$/)?.[1];
+  const normalized = (accountingValue ?? value).replace(/[$,\s]/g, "");
+  const normalizedParsed = Number(normalized);
+
+  if (!Number.isFinite(normalizedParsed)) return null;
+  return accountingValue === undefined ? normalizedParsed : -normalizedParsed;
 }
 
 function parseSheetBoolean(value: string) {

@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -20,8 +21,15 @@ export function MenuCard({ item }: { item: MenuItem }) {
   const { status: serviceStatus, openSuspensionDialog } = useServiceStatus();
 
   const [variantLabel, setVariantLabel] = useState(item.variants?.[0]?.label ?? "");
-  const [singleChoices, setSingleChoices] = useState<Record<string, string>>({});
+  const [singleChoices, setSingleChoices] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      (item.options ?? [])
+        .filter((option) => option.type === "single" && option.defaultChoice)
+        .map((option) => [option.name, option.defaultChoice ?? ""]),
+    ),
+  );
   const [addons, setAddons] = useState<Record<string, boolean>>({});
+  const [choiceQuantities, setChoiceQuantities] = useState<Record<string, string>>({});
 
   const unitPrice = useMemo(() => {
     const base = item.variants
@@ -36,10 +44,52 @@ export function MenuCard({ item }: { item: MenuItem }) {
 
   const singleOptions = (item.options ?? []).filter((o) => o.type === "single");
   const addonOptions = (item.options ?? []).filter((o) => o.type === "addon");
+  const quantityChoices = item.quantityChoices ?? [];
+  const selectedQuantityChoices = quantityChoices
+    .map((choice) => ({
+      choice,
+      quantity: parseQuantity(choiceQuantities[choice.label]),
+    }))
+    .filter((selection) => selection.quantity > 0);
+  const selectedQuantityTotal = selectedQuantityChoices.reduce(
+    (sum, selection) => sum + selection.quantity,
+    0,
+  );
+  const addButtonTotal = quantityChoices.length > 0 ? selectedQuantityTotal * unitPrice : unitPrice;
+  const addButtonLabel =
+    quantityChoices.length > 0
+      ? selectedQuantityTotal > 0
+        ? `Add ${selectedQuantityTotal} to Cart — ${formatPrice(addButtonTotal)}`
+        : "Add to Cart"
+      : `Add to Cart — ${formatPrice(addButtonTotal)}`;
+
+  const setChoiceQuantity = (label: string, value: string) => {
+    setChoiceQuantities((prev) => ({ ...prev, [label]: value.replace(/\D/g, "") }));
+  };
 
   const handleAdd = () => {
     if (serviceStatus.suspended) {
       openSuspensionDialog();
+      return;
+    }
+
+    if (quantityChoices.length > 0) {
+      if (selectedQuantityTotal === 0) {
+        toast.warning(`Enter at least one quantity for ${item.name}.`);
+        return;
+      }
+
+      for (const selection of selectedQuantityChoices) {
+        addLine({
+          itemId: item.id,
+          name: item.name,
+          unitPrice,
+          qty: selection.quantity,
+          selections: [selection.choice.label],
+        });
+      }
+      setChoiceQuantities({});
+      toast.success(`${selectedQuantityTotal} ${item.name} added to cart`);
       return;
     }
 
@@ -112,6 +162,35 @@ export function MenuCard({ item }: { item: MenuItem }) {
           </div>
         )}
 
+        {quantityChoices.length > 0 && (
+          <div className="space-y-2">
+            <Label className="block text-xs text-muted-foreground">Quantities</Label>
+            <div className="space-y-2">
+              {quantityChoices.map((choice, index) => (
+                <div
+                  key={choice.label}
+                  className="grid grid-cols-[minmax(0,1fr)_4rem] items-center gap-3 rounded-md border border-border bg-background px-3 py-2"
+                >
+                  <Label
+                    htmlFor={`${item.id}-choice-${index}`}
+                    className="cursor-pointer text-sm font-medium leading-snug"
+                  >
+                    {choice.label}
+                  </Label>
+                  <Input
+                    id={`${item.id}-choice-${index}`}
+                    value={choiceQuantities[choice.label] ?? ""}
+                    onChange={(event) => setChoiceQuantity(choice.label, event.target.value)}
+                    placeholder="0"
+                    inputMode="numeric"
+                    className="h-8 text-center"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {singleOptions.map((opt) => (
           <div key={opt.name}>
             <Label className="mb-1 block text-xs text-muted-foreground">{opt.name}</Label>
@@ -154,9 +233,14 @@ export function MenuCard({ item }: { item: MenuItem }) {
 
         <Button onClick={handleAdd} className="w-full" size="sm">
           <Plus className="h-4 w-4" />
-          Add to Cart — {formatPrice(unitPrice)}
+          {addButtonLabel}
         </Button>
       </div>
     </article>
   );
+}
+
+function parseQuantity(value: string | undefined) {
+  const parsed = Number(value ?? "");
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
 }

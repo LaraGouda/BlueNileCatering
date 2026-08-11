@@ -17,11 +17,16 @@ export interface ItemOption {
   /** "single" = pick exactly one; "addon" = optional checkbox */
   type: "single" | "addon";
   choices: OptionChoice[];
+  defaultChoice?: string;
 }
 
 export interface Variant {
   label: string;
   price: number;
+}
+
+export interface QuantityChoice {
+  label: string;
 }
 
 export interface MenuItem {
@@ -35,6 +40,7 @@ export interface MenuItem {
   /** Mutually-exclusive versions of the item with their own prices */
   variants?: Variant[];
   options?: ItemOption[];
+  quantityChoices?: QuantityChoice[];
   /** e.g. "each", "per person" */
   unit?: string;
 }
@@ -46,7 +52,8 @@ export const CATEGORIES = [
   "Vegetarian",
   "Pasta",
   "Salads & Sides",
-  "Desserts & Beverages",
+  "Desserts",
+  "Drinks",
 ] as const;
 
 const RICE_OR_POTATOES: ItemOption = {
@@ -179,15 +186,21 @@ export const MENU_ITEMS: MenuItem[] = [
 
   // ---------- MEAT TRAYS (Serves 10, choice of Rice or Roasted Potatoes) ----------
   {
-    id: "shawarma-meat-tray",
-    name: "Shawarma Meat Tray",
+    id: "beef-shawarma-meat-tray",
+    name: "Beef Shawarma Meat Tray",
     category: "Meat Trays",
     serves: "Serves 10",
-    description: "Thin-sliced chicken or Beef marinated with spices.",
-    variants: [
-      { label: "Chicken Shawarma", price: 70 },
-      { label: "Beef Shawarma", price: 75 },
-    ],
+    price: 75,
+    description: "Thin-sliced beef marinated with spices.",
+    options: [RICE_OR_POTATOES],
+  },
+  {
+    id: "chicken-shawarma-meat-tray",
+    name: "Chicken Shawarma Meat Tray",
+    category: "Meat Trays",
+    serves: "Serves 10",
+    price: 70,
+    description: "Thin-sliced chicken marinated with spices.",
     options: [RICE_OR_POTATOES],
   },
   {
@@ -449,11 +462,11 @@ export const MENU_ITEMS: MenuItem[] = [
     ],
   },
 
-  // ---------- DESSERTS AND BEVERAGES ----------
+  // ---------- DESSERTS ----------
   {
     id: "baklava",
     name: "Baklava",
-    category: "Desserts & Beverages",
+    category: "Desserts",
     serves: "10–15 People",
     price: 50,
     description: "Phyllo pastry with honey and nuts",
@@ -461,7 +474,7 @@ export const MENU_ITEMS: MenuItem[] = [
   {
     id: "baklava-cream",
     name: "Baklava with Cream Sauce",
-    category: "Desserts & Beverages",
+    category: "Desserts",
     serves: "10–15 People",
     price: 50,
     description: "Phyllo pastry with homemade cream sauce and honey",
@@ -469,7 +482,7 @@ export const MENU_ITEMS: MenuItem[] = [
   {
     id: "rice-pudding",
     name: "Rice Pudding",
-    category: "Desserts & Beverages",
+    category: "Desserts",
     unit: "each",
     price: 5,
     description: "Rice with milk, cinnamon, coconut, topped with nuts",
@@ -477,7 +490,7 @@ export const MENU_ITEMS: MenuItem[] = [
   {
     id: "cream-caramel",
     name: "Cream Caramel Cups",
-    category: "Desserts & Beverages",
+    category: "Desserts",
     unit: "each",
     price: 3,
     description: "Silky custard, condensed milk, topped with caramel sauce",
@@ -485,37 +498,101 @@ export const MENU_ITEMS: MenuItem[] = [
   {
     id: "choc-chip-cookies",
     name: "Chocolate Chip Cookies",
-    category: "Desserts & Beverages",
+    category: "Desserts",
     unit: "each",
     price: 1.5,
   },
-  {
-    id: "soda",
-    name: "Assorted Individual Soda",
-    category: "Desserts & Beverages",
-    unit: "each",
-    price: 2,
-  },
+
+  // ---------- DRINKS ----------
   {
     id: "bottled-water",
     name: "Bottled Water",
-    category: "Desserts & Beverages",
+    category: "Drinks",
     unit: "each",
     price: 1.75,
+    description: "Add bottled water by quantity.",
+    quantityChoices: [{ label: "Bottled Water" }],
+  },
+  {
+    id: "assorted-drinks",
+    name: "Assorted Drinks",
+    category: "Drinks",
+    unit: "each",
+    price: 2,
+    description: "Enter a total quantity and the cook will choose a mixed drink assortment.",
+    quantityChoices: [{ label: "Assorted Drinks - cook's choice" }],
+  },
+  {
+    id: "cola",
+    name: "Cola/Pepsi",
+    category: "Drinks",
+    unit: "each",
+    price: 2,
+    description: "Coke or Pepsi products based on availability.",
+    quantityChoices: [
+      { label: "Regular Cola/Pepsi" },
+      { label: "Diet Cola/Pepsi" },
+    ],
+  },
+  {
+    id: "lemon-lime-soda",
+    name: "Sprite",
+    category: "Drinks",
+    unit: "each",
+    price: 2,
+    description: "Sprite or similar lemon-lime soda based on availability.",
+    quantityChoices: [
+      { label: "Regular Sprite" },
+      { label: "Diet Sprite" },
+    ],
+  },
+  {
+    id: "dr-pepper",
+    name: "Dr Pepper",
+    category: "Drinks",
+    unit: "each",
+    price: 2,
+    quantityChoices: [{ label: "Dr Pepper" }, { label: "Diet Dr Pepper" }],
+  },
+  {
+    id: "ginger-ale",
+    name: "Ginger Ale",
+    category: "Drinks",
+    unit: "each",
+    price: 2,
+    quantityChoices: [{ label: "Ginger Ale" }, { label: "Diet Ginger Ale" }],
+  },
+  {
+    id: "orange-soda",
+    name: "Orange Soda",
+    category: "Drinks",
+    unit: "each",
+    price: 2,
+    quantityChoices: [{ label: "Orange Soda" }, { label: "Diet Orange Soda" }],
   },
   {
     id: "snapple-iced-tea",
-    name: "Snapple Juice or Iced Tea",
-    category: "Desserts & Beverages",
+    name: "Snapple Iced Tea",
+    category: "Drinks",
     unit: "each",
     price: 2.75,
+    description: "Choose iced tea flavors by quantity.",
+    quantityChoices: [
+      { label: "Lemon Iced Tea" },
+      { label: "Peach Iced Tea" },
+    ],
   },
   {
-    id: "paper-supplies",
-    name: "Paper Plates, Serving Spoons, Forks, Napkins",
-    category: "Desserts & Beverages",
-    unit: "per person",
-    price: 0.5,
+    id: "snapple-juice",
+    name: "Snapple Juice",
+    category: "Drinks",
+    unit: "each",
+    price: 2.75,
+    description: "Choose juice flavors by quantity.",
+    quantityChoices: [
+      { label: "Apple" },
+      { label: "Kiwi Strawberry" },
+    ],
   },
 ];
 
@@ -529,8 +606,9 @@ export const BUSINESS = {
   phoneHref: "tel:8567960113",
   deliveryFee: 30,
   minimumPeople: 10,
-  advanceNoticeHours: 6,
-  wrappedRange: "$15.99 to $18.99 per person",
+  advanceNoticeHours: 12,
+  paperSuppliesFeePerPerson: 0.5,
+  individuallyWrappedFeePerPerson: 17.5,
 };
 
 export const formatPrice = (n: number) =>

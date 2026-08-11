@@ -12,6 +12,7 @@ import {
   PauseCircle,
   Phone,
   PlayCircle,
+  RotateCcw,
   Search,
   ShieldCheck,
   ShoppingBag,
@@ -25,6 +26,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -50,7 +52,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  DASHBOARD_ORDER_STATUSES,
   loadDashboardOrders,
   saveDashboardOrders,
   type DashboardOrder,
@@ -65,6 +66,7 @@ import {
 import {
   cancelStripeAuthorizedPayment,
   captureStripeAuthorizedPayment,
+  refundStripeCapturedPayment,
 } from "@/lib/stripe.functions";
 import { verifyDashboardPin } from "@/lib/dashboard-auth.functions";
 import { updateServiceStatusSettings } from "@/lib/service-status.functions";
@@ -92,6 +94,7 @@ const STATUS_LABELS: Record<DashboardOrderStatus, string> = {
   ready: "Ready",
   completed: "Completed",
   declined: "Declined",
+  canceled: "Canceled",
 };
 
 const PAYMENT_LABELS: Record<DashboardPaymentStatus, string> = {
@@ -104,13 +107,25 @@ const PAYMENT_LABELS: Record<DashboardPaymentStatus, string> = {
   refunded: "Refunded",
 };
 
-type DashboardOrderView = DashboardOrderStatus | "all";
+type DashboardOrderView = "all" | "new" | "confirmed" | "completed" | "declined" | "canceled";
+type PaymentApprovalChoice = "confirm" | "decline";
+type RefundMode = "full" | "percentage" | "amount";
 
-const STATUS_OPTIONS = DASHBOARD_ORDER_STATUSES;
-const ORDER_VIEW_OPTIONS: DashboardOrderView[] = ["all", ...DASHBOARD_ORDER_STATUSES];
+const ORDER_VIEW_OPTIONS: DashboardOrderView[] = [
+  "all",
+  "new",
+  "confirmed",
+  "completed",
+  "declined",
+  "canceled",
+];
 const ORDER_VIEW_LABELS: Record<DashboardOrderView, string> = {
   all: "All",
-  ...STATUS_LABELS,
+  new: STATUS_LABELS.new,
+  confirmed: STATUS_LABELS.confirmed,
+  completed: STATUS_LABELS.completed,
+  declined: STATUS_LABELS.declined,
+  canceled: STATUS_LABELS.canceled,
 };
 
 function DashboardRoute() {
@@ -197,6 +212,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
   const deleteOrderFromSheets = useServerFn(deleteGoogleSheetsOrder);
   const capturePaymentOnStripe = useServerFn(captureStripeAuthorizedPayment);
   const cancelPaymentOnStripe = useServerFn(cancelStripeAuthorizedPayment);
+  const refundPaymentOnStripe = useServerFn(refundStripeCapturedPayment);
   const updateServiceStatus = useServerFn(updateServiceStatusSettings);
   const {
     status: serviceStatus,
@@ -215,6 +231,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
   const [serviceMessageMode, setServiceMessageMode] = useState<ServiceMessageMode>("default");
   const [serviceCustomMessage, setServiceCustomMessage] = useState("");
   const [serviceResumeDate, setServiceResumeDate] = useState("");
+  const [serviceResumeDateEnabled, setServiceResumeDateEnabled] = useState(false);
   const [isSavingServiceStatus, setIsSavingServiceStatus] = useState(false);
 
   const refreshOrders = useCallback(async () => {
@@ -223,10 +240,13 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
     try {
       const result = await loadOrdersFromSheets();
       const loadedOrders = result.loadedFromGoogleSheets ? result.orders : loadDashboardOrders();
+      const visibleLoadedOrders = loadedOrders.filter(shouldShowOrderToCook);
 
       setOrders(loadedOrders);
       setSelectedOrderId((current) =>
-        loadedOrders.some((order) => order.id === current) ? current : (loadedOrders[0]?.id ?? ""),
+        visibleLoadedOrders.some((order) => order.id === current)
+          ? current
+          : (visibleLoadedOrders[0]?.id ?? ""),
       );
       setOrdersSource(result.loadedFromGoogleSheets ? "google" : "local");
 
@@ -237,11 +257,12 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
       console.error("Google Sheets order load failed:", error);
 
       const fallbackOrders = loadDashboardOrders();
+      const visibleFallbackOrders = fallbackOrders.filter(shouldShowOrderToCook);
       setOrders(fallbackOrders);
       setSelectedOrderId((current) =>
-        fallbackOrders.some((order) => order.id === current)
+        visibleFallbackOrders.some((order) => order.id === current)
           ? current
-          : (fallbackOrders[0]?.id ?? ""),
+          : (visibleFallbackOrders[0]?.id ?? ""),
       );
       setOrdersSource("local");
       toast.error("Could not load Google Sheets orders. Showing local dashboard orders.");
@@ -257,7 +278,8 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
   const filteredOrders = useMemo(() => {
     const q = query.trim().toLowerCase();
     return orders.filter((order) => {
-      if (selectedStatus !== "all" && order.status !== selectedStatus) return false;
+      if (!shouldShowOrderToCook(order)) return false;
+      if (selectedStatus !== "all" && getOrderViewStatus(order) !== selectedStatus) return false;
       if (!q) return true;
       return (
         order.id.toLowerCase().includes(q) ||
@@ -269,15 +291,17 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
   }, [orders, query, selectedStatus]);
 
   const selectedOrder =
-    orders.find((order) => order.id === selectedOrderId) ?? filteredOrders[0] ?? orders[0];
+    orders.find((order) => order.id === selectedOrderId && shouldShowOrderToCook(order)) ??
+    filteredOrders[0];
 
   const metrics = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    const cookOrders = orders.filter(shouldShowOrderToCook);
     return {
-      newOrders: orders.filter((order) => order.status === "new").length,
-      todayEvents: orders.filter((order) => order.event.date === today).length,
-      openOrders: orders.filter((order) => order.status !== "completed").length,
-      revenue: orders.reduce((sum, order) => sum + order.totals.estimatedTotal, 0),
+      newOrders: cookOrders.filter((order) => getOrderViewStatus(order) === "new").length,
+      openOrders: cookOrders.filter(
+        (order) => !["completed", "declined", "canceled"].includes(getOrderViewStatus(order)),
+      ).length,
+      revenue: cookOrders.reduce((sum, order) => sum + order.totals.estimatedTotal, 0),
     };
   }, [orders]);
 
@@ -286,7 +310,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
     const nextOrders = orders.map((order) => (order.id === orderId ? { ...order, status } : order));
 
     setOrders(nextOrders);
-    setSelectedStatus(status);
+    setSelectedStatus(getStatusViewStatus(status));
     setSavingOrderId(orderId);
 
     try {
@@ -371,6 +395,38 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
     }
   };
 
+  const cancelAndRefundOrder = async (order: DashboardOrder, refundAmount?: number) => {
+    if (!order.payment.stripePaymentIntentId) {
+      toast.error("This order does not have a Stripe payment intent yet.");
+      return;
+    }
+
+    setSavingOrderId(order.id);
+
+    try {
+      const result = await refundPaymentOnStripe({
+        data: {
+          orderId: order.id,
+          paymentIntentId: order.payment.stripePaymentIntentId,
+          refundAmount,
+        },
+      });
+
+      if (result.completed) {
+        toast.success("Order canceled and Stripe refund started.");
+        setSelectedStatus("canceled");
+        await refreshOrders();
+      } else {
+        toast.error(result.reason);
+      }
+    } catch (error) {
+      console.error("Stripe refund failed:", error);
+      toast.error("Could not refund the payment.");
+    } finally {
+      setSavingOrderId(null);
+    }
+  };
+
   const deleteOrder = async (order: DashboardOrder) => {
     const previousOrders = orders;
     const nextOrders = orders.filter((existingOrder) => existingOrder.id !== order.id);
@@ -405,6 +461,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
     setServiceMessageMode(nextMode);
     setServiceCustomMessage(serviceStatus.customMessage);
     setServiceResumeDate(serviceStatus.resumeDate);
+    setServiceResumeDateEnabled(Boolean(serviceStatus.resumeDate));
     setServiceDialogOpen(true);
   };
 
@@ -444,7 +501,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
       suspended: true,
       messageMode: serviceMessageMode,
       customMessage: serviceMessageMode === "custom" ? serviceCustomMessage.trim() : "",
-      resumeDate: serviceResumeDate,
+      resumeDate: serviceResumeDateEnabled ? serviceResumeDate : "",
       updatedAt: new Date().toISOString(),
     });
   };
@@ -453,6 +510,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
     await saveServiceAvailability({
       ...serviceStatus,
       suspended: false,
+      resumeDate: "",
       updatedAt: new Date().toISOString(),
     });
   };
@@ -493,9 +551,8 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
           onResume={resumeService}
         />
 
-        <section className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <section className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <MetricCard icon={ShoppingBag} label="New Orders" value={String(metrics.newOrders)} />
-          <MetricCard icon={CalendarClock} label="Today" value={String(metrics.todayEvents)} />
           <MetricCard icon={Clock} label="Open Orders" value={String(metrics.openOrders)} />
           <MetricCard
             icon={DollarSign}
@@ -509,11 +566,16 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
           messageMode={serviceMessageMode}
           customMessage={serviceCustomMessage}
           resumeDate={serviceResumeDate}
+          resumeDateEnabled={serviceResumeDateEnabled}
           isSaving={isSavingServiceStatus}
           onOpenChange={setServiceDialogOpen}
           onMessageModeChange={setServiceMessageMode}
           onCustomMessageChange={setServiceCustomMessage}
           onResumeDateChange={setServiceResumeDate}
+          onResumeDateEnabledChange={(enabled) => {
+            setServiceResumeDateEnabled(enabled);
+            if (!enabled) setServiceResumeDate("");
+          }}
           onSubmit={suspendService}
         />
 
@@ -613,6 +675,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
             onStatusChange={setOrderStatus}
             onConfirmAndCharge={confirmAndChargeOrder}
             onDeclineAndRelease={declineAndReleaseOrder}
+            onCancelAndRefund={cancelAndRefundOrder}
             onDeleteOrder={deleteOrder}
           />
         </section>
@@ -663,25 +726,24 @@ function ServiceAvailabilityCard({
   const isSuspended = status.suspended;
   const publicMessage = getServiceSuspensionMessage(status);
 
+  const cardClass = isSuspended
+    ? "border-red-900 bg-red-950 text-white shadow-lg shadow-red-950/20"
+    : "border-emerald-900 bg-emerald-950 text-white shadow-lg shadow-emerald-950/20";
+  const statusPillClass = isSuspended
+    ? "bg-red-100 text-red-950"
+    : "bg-emerald-100 text-emerald-950";
+
   return (
-    <Card className="bg-card/95">
+    <Card className={cardClass}>
       <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-start gap-3">
-          <div
-            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${
-              isSuspended ? "bg-warning text-warning-foreground" : "bg-secondary text-primary"
-            }`}
-          >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white/15 text-white ring-1 ring-white/25">
             {isSuspended ? <PauseCircle className="h-5 w-5" /> : <PlayCircle className="h-5 w-5" />}
           </div>
           <div className="min-w-0 space-y-1">
-            <h2 className="font-display text-xl text-primary">Service Availability</h2>
+            <h2 className="font-display text-xl text-white">Service Availability</h2>
             <div
-              className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-bold ${
-                isSuspended
-                  ? "bg-destructive text-destructive-foreground"
-                  : "bg-accent text-accent-foreground"
-              }`}
+              className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-bold ${statusPillClass}`}
             >
               {isSuspended ? (
                 <PauseCircle className="h-4 w-4" />
@@ -690,25 +752,40 @@ function ServiceAvailabilityCard({
               )}
               Current Status: {isSuspended ? "Suspended service" : "Accepting orders"}
             </div>
-            {isSuspended && <p className="text-sm text-muted-foreground">{publicMessage}</p>}
+            {isSuspended && <p className="text-sm text-red-50">{publicMessage}</p>}
             {source === "local" && fallbackReason && (
-              <p className="text-xs text-destructive">Local fallback only: {fallbackReason}</p>
+              <p className="text-xs font-semibold text-yellow-100">
+                Local fallback only: {fallbackReason}
+              </p>
             )}
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           {isSuspended ? (
             <>
-              <Button variant="outline" onClick={onSuspend} disabled={isSaving}>
+              <Button
+                variant="outline"
+                className="border-white/50 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+                onClick={onSuspend}
+                disabled={isSaving}
+              >
                 Edit Message
               </Button>
-              <Button onClick={onResume} disabled={isSaving}>
+              <Button
+                className="bg-white text-red-950 hover:bg-red-100"
+                onClick={onResume}
+                disabled={isSaving}
+              >
                 <PlayCircle className="h-4 w-4" />
                 {isSaving ? "Saving..." : "Resume Service"}
               </Button>
             </>
           ) : (
-            <Button onClick={onSuspend} disabled={isSaving}>
+            <Button
+              className="bg-white text-emerald-950 hover:bg-emerald-100"
+              onClick={onSuspend}
+              disabled={isSaving}
+            >
               <PauseCircle className="h-4 w-4" />
               Suspend Service
             </Button>
@@ -724,38 +801,43 @@ function ServiceSuspensionDialog({
   messageMode,
   customMessage,
   resumeDate,
+  resumeDateEnabled,
   isSaving,
   onOpenChange,
   onMessageModeChange,
   onCustomMessageChange,
   onResumeDateChange,
+  onResumeDateEnabledChange,
   onSubmit,
 }: {
   open: boolean;
   messageMode: ServiceMessageMode;
   customMessage: string;
   resumeDate: string;
+  resumeDateEnabled: boolean;
   isSaving: boolean;
   onOpenChange: (open: boolean) => void;
   onMessageModeChange: (mode: ServiceMessageMode) => void;
   onCustomMessageChange: (message: string) => void;
   onResumeDateChange: (date: string) => void;
+  onResumeDateEnabledChange: (enabled: boolean) => void;
   onSubmit: (event: FormEvent) => void;
 }) {
+  const previewResumeDate = resumeDateEnabled ? resumeDate : "";
   const previewMessage =
     messageMode === "custom" && customMessage.trim()
       ? getServiceSuspensionMessage({
           suspended: true,
           messageMode: "custom",
           customMessage,
-          resumeDate,
+          resumeDate: previewResumeDate,
           updatedAt: "",
         })
       : getServiceSuspensionMessage({
           suspended: true,
           messageMode: "default",
           customMessage: "",
-          resumeDate,
+          resumeDate: previewResumeDate,
           updatedAt: "",
         });
 
@@ -799,14 +881,33 @@ function ServiceSuspensionDialog({
             </label>
           </RadioGroup>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="service-resume-date">Return Date (optional)</Label>
-            <Input
-              id="service-resume-date"
-              type="date"
-              value={resumeDate}
-              onChange={(event) => onResumeDateChange(event.target.value)}
-            />
+          <div className="space-y-2 rounded-lg border border-border bg-background/70 p-3">
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="service-resume-date-enabled"
+                checked={resumeDateEnabled}
+                onCheckedChange={(checked) => onResumeDateEnabledChange(checked === true)}
+                className="mt-0.5"
+              />
+              <div className="min-w-0 flex-1 space-y-2">
+                <Label
+                  htmlFor="service-resume-date-enabled"
+                  className="cursor-pointer font-semibold"
+                >
+                  Add a return date
+                </Label>
+                <Input
+                  id="service-resume-date"
+                  type="date"
+                  value={resumeDate}
+                  onChange={(event) => onResumeDateChange(event.target.value)}
+                  disabled={!resumeDateEnabled}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Optional. Leave unchecked to show no return date.
+                </p>
+              </div>
+            </div>
           </div>
 
           <div className="rounded-lg bg-warning p-3 text-sm text-warning-foreground">
@@ -839,6 +940,7 @@ function OrderDetails({
   onStatusChange,
   onConfirmAndCharge,
   onDeclineAndRelease,
+  onCancelAndRefund,
   onDeleteOrder,
 }: {
   order: DashboardOrder | undefined;
@@ -846,8 +948,15 @@ function OrderDetails({
   onStatusChange: (orderId: string, status: DashboardOrderStatus) => void;
   onConfirmAndCharge: (order: DashboardOrder) => void;
   onDeclineAndRelease: (order: DashboardOrder) => void;
+  onCancelAndRefund: (order: DashboardOrder, refundAmount?: number) => void;
   onDeleteOrder: (order: DashboardOrder) => void;
 }) {
+  const [paymentChoice, setPaymentChoice] = useState<PaymentApprovalChoice | null>(null);
+
+  useEffect(() => {
+    setPaymentChoice(null);
+  }, [order?.id, order?.payment.status]);
+
   if (!order) {
     return (
       <Card className="bg-card/95">
@@ -865,6 +974,23 @@ function OrderDetails({
   ]
     .filter(Boolean)
     .join(", ");
+  const isSavingOrder = savingOrderId === order.id;
+  const isApprovedOrder =
+    ["confirmed", "preparing", "ready"].includes(order.status) || order.payment.status === "paid";
+  const canCompleteOrder =
+    isApprovedOrder && !["completed", "declined", "canceled"].includes(order.status);
+  const canRefundOrder =
+    order.payment.status === "paid" && !["declined", "canceled"].includes(order.status);
+  const submitPaymentChoice = () => {
+    if (paymentChoice === "confirm") {
+      onConfirmAndCharge(order);
+      return;
+    }
+
+    if (paymentChoice === "decline") {
+      onDeclineAndRelease(order);
+    }
+  };
 
   return (
     <Card className="bg-card/95">
@@ -921,6 +1047,7 @@ function OrderDetails({
               <Users className="h-4 w-4 text-accent" />
               {order.event.numberOfPeople} people
             </p>
+            {order.event.paperSupplies && <Badge variant="secondary">Paper supplies</Badge>}
             {order.event.individuallyWrapped && (
               <Badge variant="secondary">Individually wrapped</Badge>
             )}
@@ -994,10 +1121,12 @@ function OrderDetails({
           <h2 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
             Payment
           </h2>
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Status</span>
-            <PaymentBadge status={order.payment.status} />
-          </div>
+          {shouldShowPaymentBadge(order.payment.status) && (
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Status</span>
+              <PaymentBadge status={order.payment.status} />
+            </div>
+          )}
           {order.payment.stripeCheckoutSessionId && (
             <div className="flex justify-between gap-3">
               <span className="text-muted-foreground">Checkout Session</span>
@@ -1022,23 +1151,64 @@ function OrderDetails({
             </Button>
           )}
           {order.payment.status === "authorized" && (
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="space-y-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  aria-pressed={paymentChoice === "confirm"}
+                  className={`h-auto min-h-20 justify-start whitespace-normal px-3 py-3 text-left ${
+                    paymentChoice === "confirm"
+                      ? "border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800 hover:text-white active:bg-emerald-900"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-950 hover:bg-emerald-100 hover:text-emerald-950 active:bg-emerald-200"
+                  }`}
+                  disabled={isSavingOrder}
+                  onClick={() => setPaymentChoice("confirm")}
+                >
+                  <DollarSign className="h-4 w-4 shrink-0" />
+                  <span className="flex flex-col items-start gap-0.5">
+                    <span className="font-semibold">Confirm & Charge</span>
+                    <span
+                      className={`text-xs font-normal ${
+                        paymentChoice === "confirm" ? "text-white/85" : "text-emerald-800"
+                      }`}
+                    >
+                      Approves the order and captures the authorized Stripe payment.
+                    </span>
+                  </span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  aria-pressed={paymentChoice === "decline"}
+                  className={`h-auto min-h-20 justify-start whitespace-normal px-3 py-3 text-left ${
+                    paymentChoice === "decline"
+                      ? "border-rose-700 bg-rose-700 text-white hover:bg-rose-800 hover:text-white active:bg-rose-900"
+                      : "border-rose-200 bg-rose-50 text-rose-950 hover:bg-rose-100 hover:text-rose-950 active:bg-rose-200"
+                  }`}
+                  disabled={isSavingOrder}
+                  onClick={() => setPaymentChoice("decline")}
+                >
+                  <XCircle className="h-4 w-4 shrink-0" />
+                  <span className="flex flex-col items-start gap-0.5">
+                    <span className="font-semibold">Decline & Release</span>
+                    <span
+                      className={`text-xs font-normal ${
+                        paymentChoice === "decline" ? "text-white/85" : "text-rose-800"
+                      }`}
+                    >
+                      Declines the request and releases the uncaptured card hold.
+                    </span>
+                  </span>
+                </Button>
+              </div>
               <Button
-                size="sm"
-                disabled={savingOrderId === order.id}
-                onClick={() => onConfirmAndCharge(order)}
+                type="button"
+                className="w-full"
+                disabled={isSavingOrder || paymentChoice === null}
+                onClick={submitPaymentChoice}
               >
-                <DollarSign className="h-4 w-4" />
-                Confirm & Charge
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={savingOrderId === order.id}
-                onClick={() => onDeclineAndRelease(order)}
-              >
-                <XCircle className="h-4 w-4" />
-                Decline & Release
+                {isSavingOrder ? "Submitting..." : "Submit Choice"}
               </Button>
             </div>
           )}
@@ -1049,20 +1219,41 @@ function OrderDetails({
           )}
         </section>
 
-        <div className="grid grid-cols-2 gap-2">
-          {STATUS_OPTIONS.map((status) => (
+        <Separator />
+
+        <section className="space-y-3">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
+            Order Workflow
+          </h2>
+          <div className="space-y-2">
             <Button
-              key={status}
-              size="sm"
-              variant={order.status === status ? "default" : "outline"}
-              disabled={savingOrderId === order.id}
-              onClick={() => onStatusChange(order.id, status)}
+              variant={order.status === "completed" ? "default" : "outline"}
+              className="h-auto min-h-20 w-full justify-start whitespace-normal px-3 py-3 text-left"
+              disabled={isSavingOrder || !canCompleteOrder}
+              onClick={() => onStatusChange(order.id, "completed")}
             >
-              {status === "completed" && <CheckCircle2 className="h-4 w-4" />}
-              {STATUS_LABELS[status]}
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <span className="flex flex-col items-start gap-0.5">
+                <span className="font-semibold">Completed</span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  Marks the approved order as finished after the event is handled.
+                </span>
+              </span>
             </Button>
-          ))}
-        </div>
+
+            <RefundOrderDialog
+              order={order}
+              disabled={isSavingOrder || !canRefundOrder}
+              onCancelAndRefund={onCancelAndRefund}
+            />
+          </div>
+          {order.payment.status !== "paid" && (
+            <p className="rounded-md bg-muted p-2 text-xs text-muted-foreground">
+              Cancel & Refund becomes available after a Stripe payment is captured. Before approval,
+              use Decline & Release.
+            </p>
+          )}
+        </section>
 
         <Separator />
 
@@ -1103,6 +1294,222 @@ function OrderDetails({
   );
 }
 
+function RefundOrderDialog({
+  order,
+  disabled,
+  onCancelAndRefund,
+}: {
+  order: DashboardOrder;
+  disabled: boolean;
+  onCancelAndRefund: (order: DashboardOrder, refundAmount?: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [refundMode, setRefundMode] = useState<RefundMode>("full");
+  const [refundPercentage, setRefundPercentage] = useState("100");
+  const [refundAmount, setRefundAmount] = useState("");
+  const refundableTotal = getRefundableOrderTotal(order);
+  const percentageValue = Number(refundPercentage);
+  const amountValue = Number(refundAmount);
+  const calculatedRefund =
+    refundMode === "full"
+      ? refundableTotal
+      : refundMode === "percentage"
+        ? refundableTotal * (percentageValue / 100)
+        : amountValue;
+  const roundedRefund = roundCurrency(calculatedRefund);
+  const isPercentageValid =
+    refundMode !== "percentage" ||
+    (Number.isFinite(percentageValue) && percentageValue > 0 && percentageValue <= 100);
+  const isAmountValid =
+    Number.isFinite(roundedRefund) && roundedRefund > 0 && roundedRefund <= refundableTotal;
+  const canSubmitRefund = isPercentageValid && isAmountValid;
+  const remainingCharge = Math.max(0, roundCurrency(refundableTotal - roundedRefund));
+
+  useEffect(() => {
+    if (!open) return;
+
+    setRefundMode("full");
+    setRefundPercentage("100");
+    setRefundAmount(formatRefundInput(refundableTotal));
+  }, [open, order.id, refundableTotal]);
+
+  const submitRefund = () => {
+    if (!canSubmitRefund) {
+      toast.error(`Choose a refund amount between $0.01 and ${formatPrice(refundableTotal)}.`);
+      return;
+    }
+
+    onCancelAndRefund(order, roundedRefund >= refundableTotal ? undefined : roundedRefund);
+    setOpen(false);
+  };
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        className="h-auto min-h-20 w-full justify-start whitespace-normal border-destructive px-3 py-3 text-left text-destructive hover:bg-destructive hover:text-destructive-foreground"
+        disabled={disabled}
+        onClick={() => setOpen(true)}
+      >
+        <RotateCcw className="h-4 w-4 shrink-0" />
+        <span className="flex flex-col items-start gap-0.5">
+          <span className="font-semibold">Cancel & Refund</span>
+          <span className="text-xs font-normal">
+            Cancels an approved order and lets you choose a full, percentage, or dollar refund.
+          </span>
+        </span>
+      </Button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Cancel and refund order {order.id}?</DialogTitle>
+            <DialogDescription>
+              Choose how much to refund before marking this order canceled. You can use a full
+              refund, a percentage, or an exact dollar amount and adjust it before submitting.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <RadioGroup
+              value={refundMode}
+              onValueChange={(value) => setRefundMode(value as RefundMode)}
+              className="grid gap-2 sm:grid-cols-3"
+            >
+              <RefundModeOption
+                id={`${order.id}-refund-full`}
+                value="full"
+                title="Full"
+                description="Refund all"
+                selected={refundMode === "full"}
+              />
+              <RefundModeOption
+                id={`${order.id}-refund-percentage`}
+                value="percentage"
+                title="Percent"
+                description="Refund part"
+                selected={refundMode === "percentage"}
+              />
+              <RefundModeOption
+                id={`${order.id}-refund-amount`}
+                value="amount"
+                title="Amount"
+                description="Exact dollars"
+                selected={refundMode === "amount"}
+              />
+            </RadioGroup>
+
+            {refundMode === "percentage" && (
+              <div className="space-y-1.5">
+                <Label htmlFor={`${order.id}-refund-percentage-input`}>Refund Percentage</Label>
+                <div className="relative">
+                  <Input
+                    id={`${order.id}-refund-percentage-input`}
+                    type="number"
+                    min="1"
+                    max="100"
+                    step="1"
+                    value={refundPercentage}
+                    onChange={(event) => setRefundPercentage(event.target.value)}
+                    className="pr-9"
+                  />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                    %
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {refundMode === "amount" && (
+              <div className="space-y-1.5">
+                <Label htmlFor={`${order.id}-refund-amount-input`}>Refund Amount</Label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                    $
+                  </span>
+                  <Input
+                    id={`${order.id}-refund-amount-input`}
+                    type="number"
+                    min="0.01"
+                    max={String(refundableTotal)}
+                    step="0.01"
+                    value={refundAmount}
+                    onChange={(event) => setRefundAmount(event.target.value)}
+                    className="pl-7"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2 rounded-lg border border-border bg-muted p-3 text-sm">
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Paid total</span>
+                <span className="font-semibold">{formatPrice(refundableTotal)}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Refund</span>
+                <span className="font-semibold text-destructive">
+                  {isAmountValid ? formatPrice(roundedRefund) : "-"}
+                </span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Remaining charge</span>
+                <span className="font-semibold">
+                  {isAmountValid ? formatPrice(remainingCharge) : "-"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Keep Order
+            </Button>
+            <Button
+              type="button"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!canSubmitRefund}
+              onClick={submitRefund}
+            >
+              Cancel & Refund
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function RefundModeOption({
+  id,
+  value,
+  title,
+  description,
+  selected,
+}: {
+  id: string;
+  value: RefundMode;
+  title: string;
+  description: string;
+  selected: boolean;
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className={`flex cursor-pointer items-start gap-2 rounded-lg border p-3 transition-colors ${
+        selected ? "border-primary bg-secondary" : "border-border bg-background hover:bg-muted"
+      }`}
+    >
+      <RadioGroupItem id={id} value={value} className="mt-1" />
+      <span className="min-w-0">
+        <span className="block font-semibold text-foreground">{title}</span>
+        <span className="block text-xs text-muted-foreground">{description}</span>
+      </span>
+    </label>
+  );
+}
+
 function StatusBadge({ status }: { status: DashboardOrderStatus }) {
   return (
     <Badge className={`${getStatusClass(status)} border-transparent`}>
@@ -1112,11 +1519,44 @@ function StatusBadge({ status }: { status: DashboardOrderStatus }) {
 }
 
 function PaymentBadge({ status }: { status: DashboardPaymentStatus }) {
+  if (!shouldShowPaymentBadge(status)) return null;
+
   return (
     <Badge className={`${getPaymentClass(status)} border-transparent`}>
       {PAYMENT_LABELS[status]}
     </Badge>
   );
+}
+
+function shouldShowPaymentBadge(status: DashboardPaymentStatus) {
+  return status !== "authorized";
+}
+
+function shouldShowOrderToCook(order: DashboardOrder) {
+  if (order.status === "completed" || order.status === "declined" || order.status === "canceled") {
+    return true;
+  }
+
+  return order.payment.status === "authorized" || order.payment.status === "paid";
+}
+
+function getOrderViewStatus(order: DashboardOrder): DashboardOrderView {
+  if (order.status === "completed" || order.status === "declined" || order.status === "canceled") {
+    return order.status;
+  }
+
+  if (getStatusViewStatus(order.status) === "confirmed") return "confirmed";
+
+  if (order.payment.status === "paid" || order.payment.status === "refunded") {
+    return order.payment.status === "refunded" ? "canceled" : "confirmed";
+  }
+
+  return "new";
+}
+
+function getStatusViewStatus(status: DashboardOrderStatus): DashboardOrderView {
+  if (status === "preparing" || status === "ready") return "confirmed";
+  return status;
 }
 
 function getStatusClass(status: DashboardOrderStatus) {
@@ -1133,6 +1573,8 @@ function getStatusClass(status: DashboardOrderStatus) {
       return "bg-muted text-muted-foreground";
     case "declined":
       return "bg-destructive text-destructive-foreground";
+    case "canceled":
+      return "bg-muted text-muted-foreground";
   }
 }
 
@@ -1153,6 +1595,18 @@ function getPaymentClass(status: DashboardPaymentStatus) {
     case "unpaid":
       return "bg-muted text-muted-foreground";
   }
+}
+
+function getRefundableOrderTotal(order: DashboardOrder) {
+  return roundCurrency(order.totals.finalTotal ?? order.totals.estimatedTotal);
+}
+
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function formatRefundInput(value: number) {
+  return value.toFixed(2).replace(/\.00$/, "");
 }
 
 function formatDateTime(value: string) {

@@ -3,6 +3,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { CheckCircle2, Send, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -14,13 +15,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useCart } from "@/lib/cart-context";
 import {
   createDashboardOrder,
@@ -42,9 +36,12 @@ interface FormState {
   addressLine2: string;
   zipCode: string;
   people: string;
-  individuallyWrapped: string;
+  paperSupplies: boolean;
+  individuallyWrapped: boolean;
   instructions: string;
 }
+
+type TextFormField = Exclude<keyof FormState, "paperSupplies" | "individuallyWrapped">;
 
 const EMPTY_FORM: FormState = {
   name: "",
@@ -56,17 +53,28 @@ const EMPTY_FORM: FormState = {
   addressLine2: "",
   zipCode: "",
   people: "",
-  individuallyWrapped: "no",
+  paperSupplies: false,
+  individuallyWrapped: false,
   instructions: "",
 };
 
+function requiredLabel(label: string, suffix = "") {
+  return (
+    <>
+      {label}
+      <span className="text-red-600">*</span>
+      {suffix}
+    </>
+  );
+}
+
 export function OrderRequestForm() {
-  const { lines, subtotal, deliveryFee, total, clear } = useCart();
+  const { lines, subtotal, deliveryFee, clear } = useCart();
   const { status: serviceStatus, setServiceStatus, openSuspensionDialog } = useServiceStatus();
   const submitOrderToSheets = useServerFn(submitOrderToGoogleSheets);
   const createCheckoutSession = useServerFn(createStripeCheckoutSession);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<TextFormField, string>>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkoutResult, setCheckoutResult] = useState<{
     status: "success" | "cancelled";
@@ -91,14 +99,28 @@ export function OrderRequestForm() {
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   };
 
-  const set = (field: keyof FormState) => (value: string) => {
+  const set = (field: TextFormField) => (value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
     setErrors((prev) => ({ ...prev, [field]: undefined }));
   };
+  const setChecked = (field: "paperSupplies" | "individuallyWrapped") => (checked: boolean) => {
+    setForm((prev) => ({ ...prev, [field]: checked }));
+  };
 
   const peopleNum = Number(form.people);
+  const addOnPeopleCount =
+    form.people !== "" && Number.isFinite(peopleNum) && peopleNum > 0 ? peopleNum : 0;
   const underMinimum =
     form.people !== "" && !Number.isNaN(peopleNum) && peopleNum < BUSINESS.minimumPeople;
+  const paperSuppliesFee = form.paperSupplies
+    ? addOnPeopleCount * BUSINESS.paperSuppliesFeePerPerson
+    : 0;
+  const individuallyWrappedFee = form.individuallyWrapped
+    ? addOnPeopleCount * BUSINESS.individuallyWrappedFeePerPerson
+    : 0;
+  const addOnsTotal = paperSuppliesFee + individuallyWrappedFee;
+  const orderSubtotal = subtotal + addOnsTotal;
+  const orderTotal = orderSubtotal + deliveryFee;
 
   const hoursUntilEvent = (): number | null => {
     if (!form.eventDate || !form.eventTime) return null;
@@ -119,7 +141,7 @@ export function OrderRequestForm() {
     if (!form.eventTime) next.eventTime = "Event time is required.";
     if (!form.address.trim()) next.address = "Delivery address is required.";
     if (!/^\d{5}(-\d{4})?$/.test(form.zipCode.trim())) next.zipCode = "Enter a valid ZIP code.";
-    if (!form.people || Number.isNaN(peopleNum) || peopleNum < 1)
+    if (!form.people || Number.isNaN(peopleNum) || !Number.isInteger(peopleNum) || peopleNum < 1)
       next.people = "Enter the number of people.";
     else if (peopleNum < BUSINESS.minimumPeople)
       next.people = `Minimum ${BUSINESS.minimumPeople} people per catering order.`;
@@ -148,6 +170,33 @@ export function OrderRequestForm() {
       return;
     }
 
+    const addOnLines = [
+      ...(form.paperSupplies
+        ? [
+            {
+              item: "Paper Plates, Serving Spoons, Forks, Napkins",
+              selections: [],
+              notes: "",
+              quantity: peopleNum,
+              unitPrice: BUSINESS.paperSuppliesFeePerPerson,
+              lineTotal: paperSuppliesFee,
+            },
+          ]
+        : []),
+      ...(form.individuallyWrapped
+        ? [
+            {
+              item: "Individually Wrapped Meals",
+              selections: [],
+              notes: "",
+              quantity: peopleNum,
+              unitPrice: BUSINESS.individuallyWrappedFeePerPerson,
+              lineTotal: individuallyWrappedFee,
+            },
+          ]
+        : []),
+    ];
+
     const orderPayload: NewDashboardOrder = {
       submittedAt: new Date().toISOString(),
       business: BUSINESS.name,
@@ -163,21 +212,25 @@ export function OrderRequestForm() {
         deliveryAddressLine2: form.addressLine2.trim(),
         zipCode: form.zipCode.trim(),
         numberOfPeople: peopleNum,
-        individuallyWrapped: form.individuallyWrapped === "yes",
+        paperSupplies: form.paperSupplies,
+        individuallyWrapped: form.individuallyWrapped,
         specialInstructions: form.instructions.trim(),
       },
-      cart: lines.map((l) => ({
-        item: l.name,
-        selections: l.selections,
-        notes: l.notes,
-        quantity: l.qty,
-        unitPrice: l.unitPrice,
-        lineTotal: l.unitPrice * l.qty,
-      })),
+      cart: [
+        ...lines.map((l) => ({
+          item: l.name,
+          selections: l.selections,
+          notes: l.notes,
+          quantity: l.qty,
+          unitPrice: l.unitPrice,
+          lineTotal: l.unitPrice * l.qty,
+        })),
+        ...addOnLines,
+      ],
       totals: {
-        subtotal,
+        subtotal: orderSubtotal,
         deliveryFee,
-        estimatedTotal: total,
+        estimatedTotal: orderTotal,
       },
     };
 
@@ -224,7 +277,7 @@ export function OrderRequestForm() {
     }
   };
 
-  const field = (id: keyof FormState, label: string, input: React.ReactNode) => (
+  const field = (id: TextFormField, label: React.ReactNode, input: React.ReactNode) => (
     <div className="space-y-1">
       <Label htmlFor={id}>{label}</Label>
       {input}
@@ -252,7 +305,7 @@ export function OrderRequestForm() {
               </DialogTitle>
               <DialogDescription className="mx-auto max-w-sm text-center text-sm leading-6 text-muted-foreground">
                 {checkoutResult?.status === "success"
-                  ? "We received your catering request and sent an email confirmation. Your card is only authorized for now, and the kitchen will review everything before charging."
+                  ? "We received your catering request and sent an email confirmation. Please check your inbox and spam folder. Your card is only authorized for now, and the kitchen will review everything before charging."
                   : "Your order was not submitted for payment. You can review your cart and try again when you are ready."}
               </DialogDescription>
             </DialogHeader>
@@ -290,7 +343,10 @@ export function OrderRequestForm() {
         <h2 className="section-title text-center text-3xl">Request an Order</h2>
         <p className="mx-auto mt-2 max-w-xl text-center text-sm text-muted-foreground">
           Fill out the form and enter payment securely through Stripe. Your card is only authorized
-          now and is charged after the kitchen confirms. You can also call or text us at{" "}
+          now and is charged after the kitchen confirms.
+        </p>
+        <p className="mx-auto mt-2 max-w-xl text-center text-sm text-muted-foreground">
+          You can also call or text us at{" "}
           <a href={BUSINESS.phoneHref} className="font-semibold text-primary underline">
             {BUSINESS.phone}
           </a>
@@ -305,7 +361,7 @@ export function OrderRequestForm() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {field(
               "name",
-              "Full Name *",
+              requiredLabel("Full Name"),
               <Input
                 id="name"
                 value={form.name}
@@ -316,13 +372,13 @@ export function OrderRequestForm() {
             )}
             {field(
               "phone",
-              "Phone *",
+              requiredLabel("Phone"),
               <Input
                 id="phone"
                 type="tel"
                 value={form.phone}
                 onChange={(e) => set("phone")(e.target.value)}
-                placeholder="856-555-0123"
+                placeholder="xxx-xxx-xxxx"
                 autoComplete="tel"
               />,
             )}
@@ -330,7 +386,7 @@ export function OrderRequestForm() {
 
           {field(
             "email",
-            "Email *",
+            requiredLabel("Email"),
             <Input
               id="email"
               type="email"
@@ -344,7 +400,7 @@ export function OrderRequestForm() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {field(
               "eventDate",
-              "Event Date *",
+              requiredLabel("Event Date"),
               <Input
                 id="eventDate"
                 type="date"
@@ -354,7 +410,7 @@ export function OrderRequestForm() {
             )}
             {field(
               "eventTime",
-              "Event Time *",
+              requiredLabel("Event Time"),
               <Input
                 id="eventTime"
                 type="time"
@@ -377,7 +433,7 @@ export function OrderRequestForm() {
 
           {field(
             "address",
-            "Delivery Address *",
+            requiredLabel("Delivery Address"),
             <Input
               id="address"
               value={form.address}
@@ -389,7 +445,7 @@ export function OrderRequestForm() {
 
           {field(
             "addressLine2",
-            "Address Line 2",
+            "Delivery Address Line 2",
             <Input
               id="addressLine2"
               value={form.addressLine2}
@@ -399,44 +455,30 @@ export function OrderRequestForm() {
             />,
           )}
 
-          {field(
-            "zipCode",
-            "ZIP Code *",
-            <Input
-              id="zipCode"
-              value={form.zipCode}
-              onChange={(e) => set("zipCode")(e.target.value)}
-              placeholder="08690"
-              autoComplete="postal-code"
-              inputMode="numeric"
-            />,
-          )}
-
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {field(
+              "zipCode",
+              requiredLabel("ZIP Code"),
+              <Input
+                id="zipCode"
+                value={form.zipCode}
+                onChange={(e) => set("zipCode")(e.target.value)}
+                placeholder="xxxxx"
+                autoComplete="postal-code"
+                inputMode="numeric"
+              />,
+            )}
+            {field(
               "people",
-              `Number of People * (min ${BUSINESS.minimumPeople})`,
+              requiredLabel("Number of People", ` (minimum ${BUSINESS.minimumPeople})`),
               <Input
                 id="people"
                 type="number"
                 min={1}
                 value={form.people}
                 onChange={(e) => set("people")(e.target.value)}
-                placeholder="e.g. 25"
               />,
             )}
-            <div className="space-y-1">
-              <Label htmlFor="individuallyWrapped">Individually Wrapped Meals?</Label>
-              <Select value={form.individuallyWrapped} onValueChange={set("individuallyWrapped")}>
-                <SelectTrigger id="individuallyWrapped" className="w-full bg-background">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="no">No</SelectItem>
-                  <SelectItem value="yes">Yes ({BUSINESS.wrappedRange})</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
           </div>
 
           {underMinimum && (
@@ -445,6 +487,51 @@ export function OrderRequestForm() {
               <p>Catering orders require a minimum of {BUSINESS.minimumPeople} people.</p>
             </div>
           )}
+
+          <div className="space-y-2">
+            <Label>Optional Add-ons</Label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-md border border-border bg-background p-3">
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    id="paperSupplies"
+                    checked={form.paperSupplies}
+                    onCheckedChange={(checked) => setChecked("paperSupplies")(checked === true)}
+                    className="mt-0.5"
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="paperSupplies" className="cursor-pointer font-semibold">
+                      Paper Plates, Serving Spoons, Forks, Napkins
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {formatPrice(BUSINESS.paperSuppliesFeePerPerson)} per person.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-md border border-border bg-background p-3">
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    id="individuallyWrapped"
+                    checked={form.individuallyWrapped}
+                    onCheckedChange={(checked) =>
+                      setChecked("individuallyWrapped")(checked === true)
+                    }
+                    className="mt-0.5"
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="individuallyWrapped" className="cursor-pointer font-semibold">
+                      Individually Wrapped Meals
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {formatPrice(BUSINESS.individuallyWrappedFeePerPerson)} per person.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
           {field(
             "instructions",
@@ -461,17 +548,35 @@ export function OrderRequestForm() {
           <div className="rounded-lg bg-muted p-3 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">
-                Cart ({lines.length} item{lines.length === 1 ? "" : "s"})
+                Menu subtotal ({lines.length} item{lines.length === 1 ? "" : "s"})
               </span>
               <span className="font-semibold">{formatPrice(subtotal)}</span>
             </div>
+            {form.paperSupplies && (
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">
+                  Paper supplies ({addOnPeopleCount} x{" "}
+                  {formatPrice(BUSINESS.paperSuppliesFeePerPerson)})
+                </span>
+                <span className="font-semibold">{formatPrice(paperSuppliesFee)}</span>
+              </div>
+            )}
+            {form.individuallyWrapped && (
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">
+                  Individually wrapped meals ({addOnPeopleCount} x{" "}
+                  {formatPrice(BUSINESS.individuallyWrappedFeePerPerson)})
+                </span>
+                <span className="font-semibold">{formatPrice(individuallyWrappedFee)}</span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span className="text-muted-foreground">Delivery fee</span>
               <span className="font-semibold">{formatPrice(deliveryFee)}</span>
             </div>
             <div className="mt-1 flex justify-between border-t border-border pt-1 text-base font-bold">
               <span>Estimated total</span>
-              <span className="text-primary">{formatPrice(total)}</span>
+              <span className="text-primary">{formatPrice(orderTotal)}</span>
             </div>
           </div>
 

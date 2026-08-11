@@ -1,5 +1,5 @@
 export type DashboardOrderStatus =
-  "new" | "confirmed" | "preparing" | "ready" | "completed" | "declined";
+  "new" | "confirmed" | "preparing" | "ready" | "completed" | "declined" | "canceled";
 export type DashboardPaymentStatus =
   "unpaid" | "pending" | "authorized" | "paid" | "canceled" | "failed" | "refunded";
 
@@ -10,6 +10,7 @@ export const DASHBOARD_ORDER_STATUSES: DashboardOrderStatus[] = [
   "ready",
   "completed",
   "declined",
+  "canceled",
 ];
 
 export const DASHBOARD_PAYMENT_STATUSES: DashboardPaymentStatus[] = [
@@ -54,6 +55,7 @@ export interface DashboardOrder {
     deliveryAddressLine2: string;
     zipCode: string;
     numberOfPeople: number;
+    paperSupplies: boolean;
     individuallyWrapped: boolean;
     specialInstructions: string;
   };
@@ -99,6 +101,7 @@ const SAMPLE_ORDERS: DashboardOrder[] = [
       deliveryAddressLine2: "Suite 4B",
       zipCode: "08690",
       numberOfPeople: 24,
+      paperSupplies: false,
       individuallyWrapped: false,
       specialInstructions: "Please label vegetarian trays and call when arriving.",
     },
@@ -151,6 +154,7 @@ const SAMPLE_ORDERS: DashboardOrder[] = [
       deliveryAddressLine2: "",
       zipCode: "08610",
       numberOfPeople: 36,
+      paperSupplies: false,
       individuallyWrapped: true,
       specialInstructions: "Deliver to rear entrance by loading dock.",
     },
@@ -248,8 +252,16 @@ export function isDashboardPaymentStatus(value: string): value is DashboardPayme
 function withOrderDefaults(order: DashboardOrder): DashboardOrder {
   return {
     ...order,
+    event: withEventDefaults(order.event),
     payment: withPaymentDefaults(order.payment),
     totals: withTotalDefaults(order.totals),
+  };
+}
+
+function withEventDefaults(event: DashboardOrder["event"]): DashboardOrder["event"] {
+  return {
+    ...event,
+    paperSupplies: event.paperSupplies ?? false,
   };
 }
 

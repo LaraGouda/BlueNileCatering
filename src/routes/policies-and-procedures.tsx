@@ -42,7 +42,7 @@ const QUICK_POLICIES = [
   {
     icon: CreditCard,
     label: "Payment",
-    text: "Cards are authorized first and charged after kitchen review.",
+    text: "Cards are authorized first and charged only after kitchen review.",
   },
 ];
 
@@ -67,7 +67,9 @@ const POLICY_SECTIONS = [
     title: "Menu, Pricing, and Customization",
     items: [
       "Menu prices are based on the selections shown online. Final totals may change if the order requires substitutions, custom quantities, special packaging, or added service.",
-      `Individually wrapped meals are available in the ${BUSINESS.wrappedRange} range per person and must be selected or requested before confirmation.`,
+      `Individually wrapped meals are available for ${formatPrice(BUSINESS.individuallyWrappedFeePerPerson)} per person and must be selected or requested before confirmation.`,
+      `Paper plates, serving spoons, forks, and napkins can be added for ${formatPrice(BUSINESS.paperSuppliesFeePerPerson)} per person.`,
+      "Drink orders can be left assorted for the kitchen to choose or customized by available drink type and quantity.",
       "Menu items, ingredients, and availability may change. Blue Nile will review substitutions or adjustments before confirming the order.",
     ],
   },
@@ -75,6 +77,7 @@ const POLICY_SECTIONS = [
     title: "Payment Policy",
     items: [
       "Online checkout uses secure Stripe payment authorization. The card is authorized when the request is submitted.",
+      "If Stripe cannot authorize the payment, the order is not sent to the kitchen for review and the customer may need to submit the request again with another payment method.",
       "The kitchen reviews the order before charging. If the order is declined or cannot be fulfilled, the card hold is released.",
       "Blue Nile does not store full card details. Payment information is handled through Stripe.",
     ],
@@ -94,6 +97,14 @@ const POLICY_SECTIONS = [
       `Order changes and cancellations must be requested by calling or texting ${BUSINESS.phone}.`,
       "Changes are not confirmed until Blue Nile acknowledges them. Last-minute changes may not be possible once food has been purchased, prepared, or dispatched.",
       "If an order is canceled after preparation has started or after delivery is in progress, charges may apply for completed work, purchased ingredients, or delivery costs.",
+    ],
+  },
+  {
+    title: "Refund Policy",
+    items: [
+      "Approved and charged orders that later need to be canceled may be eligible for a full or partial refund through Stripe.",
+      "Refunds can be issued as a full refund, a percentage of the paid total, or a specific dollar amount depending on timing, food already purchased or prepared, delivery work, and approved adjustments.",
+      "Refunds are returned to the original payment method through Stripe. Bank or card processing times may vary.",
     ],
   },
   {
@@ -230,7 +241,8 @@ function PoliciesAndProcedures() {
                   <h2 className="font-display text-xl">Need help?</h2>
                   <p className="mt-2 text-sm leading-6">
                     Call or text before submitting when an event has allergies, complex timing,
-                    special setup needs, or less than a full day of notice.
+                    special setup needs, or timing near the {BUSINESS.advanceNoticeHours}-hour
+                    minimum notice window.
                   </p>
                   <a
                     href={BUSINESS.phoneHref}

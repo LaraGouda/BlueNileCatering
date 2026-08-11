@@ -17,6 +17,7 @@ const orderStatusSchema = z.enum([
   "ready",
   "completed",
   "declined",
+  "canceled",
 ]);
 const paymentStatusSchema = z.enum([
   "unpaid",
@@ -51,6 +52,7 @@ const dashboardOrderSchema: z.ZodType<DashboardOrder> = z.object({
     deliveryAddressLine2: z.string(),
     zipCode: z.string().min(1),
     numberOfPeople: z.number().int().positive(),
+    paperSupplies: z.boolean(),
     individuallyWrapped: z.boolean(),
     specialInstructions: z.string(),
   }),

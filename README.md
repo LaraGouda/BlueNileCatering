@@ -1,62 +1,32 @@
 # Blue Nile Catering
 
-A catering order site for Blue Nile Mediterranean Grill.
+A custom catering website for Blue Nile Mediterranean Grill, made to help customers browse the menu, build a catering order, and send everything to the kitchen in a clear, organized way.
 
-Customers can browse the catering menu, build a cart, and submit a catering request with Stripe payment authorization.
+This project is meant to feel warm, simple, and useful. Customers can look through trays, desserts, drinks, add-ons, delivery details, and payment authorization without needing to call back and forth for every little detail. The cook gets the order details in a dashboard, and customers can come back to check their orders.
 
-## Local Setup
+Built with care by Lara Gouda for Blue Nile. :)
 
-Add the required Google Sheets and Stripe keys to `.env`, then run:
+## What It Does
 
-```sh
-npm run dev
-```
+- Shows a full catering menu with categories, options, quantities, and drink customization.
+- Lets customers build a cart and submit a catering request.
+- Handles order details like date, time, address, guest count, paper supplies, and individually wrapped meals.
+- Uses Stripe for payment authorization before the kitchen confirms the order.
+- Sends order information to Google Sheets so the business has a simple backend record.
+- Sends email notifications with Resend.
+- Includes a private dashboard for reviewing, confirming, charging, declining, and managing orders.
 
-For local Stripe webhooks, keep this running in a second terminal:
+## Tools Used
 
-```sh
-stripe listen --forward-to localhost:8080/api/stripe/webhook
-```
+- React and TypeScript for the app UI.
+- TanStack Start and TanStack Router for routing and server functions.
+- Tailwind CSS for styling.
+- Radix UI and shadcn-style components for dialogs, sheets, forms, and controls.
+- Stripe for secure payment authorization.
+- Google Sheets as the order backend.
+- Resend for transactional emails.
+- Vite for building and running the project.
 
-Copy the printed `whsec_...` value into `STRIPE_WEBHOOK_SECRET`.
+## Project Feel
 
-Orders are stored in Google Sheets and managed from `/dashboard`.
-
-## Email Notifications
-
-This app uses Resend for transactional order emails.
-
-Resend setup:
-
-1. Add and verify your sending domain in Resend.
-2. Create a Resend API key.
-3. Use a `RESEND_FROM_EMAIL` address on the verified domain.
-
-Required `.env` values:
-
-```sh
-RESEND_API_KEY=re_...
-RESEND_FROM_EMAIL="Blue Nile Catering <orders@yourdomain.com>"
-RESEND_REPLY_TO_EMAIL=website@yourdomain.com
-COOK_ORDER_EMAIL=cook@example.com
-WEBSITE_OWNER_EMAIL=website@example.com
-OWNER_DASHBOARD_PIN=use-a-private-pin
-CUSTOMER_ORDER_ACCESS_SECRET=use-a-long-random-secret
-ORDER_REMINDER_SECRET=use-a-long-random-secret
-PUBLIC_SITE_URL=https://your-live-site.com
-```
-
-Emails sent:
-
-- After Stripe confirms the card authorization: customer receives a "request received" email and the cook receives a new order review email.
-- After the dashboard `Confirm & Charge` action: customer receives an approval/charged email and the cook receives a confirmation email.
-- After the dashboard `Decline & Release` action: customer receives a declined/released email and the cook receives a confirmation email.
-
-For 12-hour cook reminders, schedule this endpoint to run every 12 hours:
-
-```sh
-curl -X POST "$PUBLIC_SITE_URL/api/order-reminders" \
-  -H "Authorization: Bearer $ORDER_REMINDER_SECRET"
-```
-
-The reminder endpoint only emails orders that are still `new`, have an `authorized` payment, and were submitted at least 12 hours ago.
+The goal was to make something practical but still personal: a real ordering system that feels like it belongs to a family-owned catering business, not a generic checkout page. The site keeps the menu easy to scan, the order flow straightforward, and the kitchen details visible where they need to be.

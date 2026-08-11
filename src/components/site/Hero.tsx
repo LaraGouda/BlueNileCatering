@@ -1,4 +1,4 @@
-import { Phone, Truck, Users, Clock, Package } from "lucide-react";
+import { Phone, Truck, Users, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BUSINESS } from "@/data/menu";
 import logoReferenceUrl from "@/assets/logo-reference.png?url";
@@ -16,13 +16,8 @@ const INFO_CARDS = [
   },
   {
     icon: Clock,
-    title: "6 Hours Advance Notice",
-    text: "Please place orders at least 6 hours ahead.",
-  },
-  {
-    icon: Package,
-    title: "Individually Wrapped Meals",
-    text: `Any meal can be individually wrapped — ${BUSINESS.wrappedRange}.`,
+    title: `${BUSINESS.advanceNoticeHours} Hours Advance Notice`,
+    text: `Please place orders at least ${BUSINESS.advanceNoticeHours} hours ahead.`,
   },
 ];
 
@@ -41,9 +36,7 @@ export function Hero() {
             <br />
             <span>We will bring the party to you!</span>
           </h1>
-          <p className="mx-auto mt-4 max-w-xl text-muted-foreground">
-            {BUSINESS.about}
-          </p>
+          <p className="mx-auto mt-4 max-w-xl text-muted-foreground">{BUSINESS.about}</p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
             <Button asChild size="lg">
               <a href="#menu">Browse Catering Menu</a>
@@ -57,7 +50,7 @@ export function Hero() {
           </div>
         </div>
 
-        <ul className="mx-auto mt-8 grid max-w-4xl grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <ul className="mx-auto mt-8 grid max-w-4xl grid-cols-1 gap-3 sm:grid-cols-3">
           {INFO_CARDS.map((card) => (
             <li
               key={card.title}

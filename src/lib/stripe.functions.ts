@@ -5,6 +5,7 @@ import {
   cancelAuthorizedPayment,
   captureAuthorizedPayment,
   createManualCaptureCheckoutSession,
+  refundCapturedPayment,
 } from "./stripe.server";
 import type { DashboardOrder } from "./order-store";
 
@@ -15,6 +16,7 @@ const orderStatusSchema = z.enum([
   "ready",
   "completed",
   "declined",
+  "canceled",
 ]);
 const paymentStatusSchema = z.enum([
   "unpaid",
@@ -49,6 +51,7 @@ const dashboardOrderSchema: z.ZodType<DashboardOrder> = z.object({
     deliveryAddressLine2: z.string(),
     zipCode: z.string().min(1),
     numberOfPeople: z.number().int().positive(),
+    paperSupplies: z.boolean(),
     individuallyWrapped: z.boolean(),
     specialInstructions: z.string(),
   }),
@@ -76,6 +79,10 @@ const paymentActionSchema = z.object({
   paymentIntentId: z.string().min(1),
 });
 
+const refundActionSchema = paymentActionSchema.extend({
+  refundAmount: z.number().positive().optional(),
+});
+
 export const createStripeCheckoutSession = createServerFn({ method: "POST" })
   .validator((data: unknown) => dashboardOrderSchema.parse(data))
   .handler(async ({ data }) => {
@@ -92,4 +99,10 @@ export const cancelStripeAuthorizedPayment = createServerFn({ method: "POST" })
   .validator((data: unknown) => paymentActionSchema.parse(data))
   .handler(async ({ data }) => {
     return cancelAuthorizedPayment(data.orderId, data.paymentIntentId);
+  });
+
+export const refundStripeCapturedPayment = createServerFn({ method: "POST" })
+  .validator((data: unknown) => refundActionSchema.parse(data))
+  .handler(async ({ data }) => {
+    return refundCapturedPayment(data.orderId, data.paymentIntentId, data.refundAmount);
   });

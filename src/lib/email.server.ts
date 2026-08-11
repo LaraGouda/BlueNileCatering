@@ -67,6 +67,14 @@ export async function sendOrderDeclinedNotifications(
   return { customer, cook };
 }
 
+export async function sendOrderPaymentFailedNotifications(
+  order: DashboardOrder,
+): Promise<NotificationResults> {
+  const customer = await sendCustomerOrderPaymentFailedEmail(order);
+
+  return { customer };
+}
+
 export async function handleOrderReminderRequest(request: Request) {
   if (request.method !== "GET" && request.method !== "POST") {
     return jsonResponse({ error: "Method not allowed." }, 405);
@@ -261,6 +269,34 @@ function sendCookNewOrderEmail(order: DashboardOrder) {
       ),
     ),
     idempotencyKey: `order-submitted/cook/${order.id}`,
+  });
+}
+
+function sendCustomerOrderPaymentFailedEmail(order: DashboardOrder) {
+  return sendEmail({
+    to: order.customer.email,
+    subject: `Payment could not be authorized for order ${order.id}`,
+    text: [
+      `Hi ${order.customer.name},`,
+      "",
+      `We could not authorize the payment for your catering request with ${BUSINESS.name}.`,
+      "The kitchen will not receive this order for review unless payment is successfully authorized.",
+      "",
+      "You can submit the order again with another payment method or call us for help.",
+      "",
+      `Questions? Call ${BUSINESS.phone}.`,
+    ].join("\n"),
+    html: emailLayout(
+      "Payment could not be authorized",
+      [
+        `Hi ${escapeHtml(order.customer.name)},`,
+        `We could not authorize the payment for your catering request with ${BUSINESS.name}.`,
+        `The kitchen will not receive this order for review unless payment is successfully authorized.`,
+        `You can submit the order again with another payment method or call us for help.`,
+      ],
+      orderDetailsHtml(order),
+    ),
+    idempotencyKey: `order-payment-failed/customer/${order.id}`,
   });
 }
 
@@ -532,6 +568,8 @@ function orderSummaryText(order: DashboardOrder) {
     `Event: ${formatDate(order.event.date)} at ${formatTime(order.event.time)}`,
     `Delivery: ${formatAddress(order)}`,
     `Guests: ${order.event.numberOfPeople}`,
+    `Paper supplies: ${order.event.paperSupplies ? "yes" : "no"}`,
+    `Individually wrapped: ${order.event.individuallyWrapped ? "yes" : "no"}`,
     `Estimated total: ${formatPrice(order.totals.estimatedTotal)}`,
   ].join("\n");
 }
@@ -560,6 +598,8 @@ function orderDetailsHtml(order: DashboardOrder) {
     ["Event", `${formatDate(order.event.date)} at ${formatTime(order.event.time)}`],
     ["Delivery", formatAddress(order)],
     ["Guests", String(order.event.numberOfPeople)],
+    ["Paper supplies", order.event.paperSupplies ? "yes" : "no"],
+    ["Individually wrapped", order.event.individuallyWrapped ? "yes" : "no"],
     ["Estimated total", formatPrice(order.totals.estimatedTotal)],
   ]);
 }
