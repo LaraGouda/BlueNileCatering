@@ -221,7 +221,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
     setServiceStatus,
   } = useServiceStatus();
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
-  const [selectedStatus, setSelectedStatus] = useState<DashboardOrderView>("new");
+  const [selectedStatus, setSelectedStatus] = useState<DashboardOrderView>("all");
   const [query, setQuery] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
@@ -620,7 +620,7 @@ function DashboardShell({ onSignOut }: { onSignOut: () => void }) {
                 ))}
               </div>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="max-h-[12.5rem] space-y-3 overflow-y-auto overscroll-contain pr-3 sm:max-h-[18rem] xl:max-h-none xl:overflow-visible xl:pr-6">
               {isLoadingOrders ? (
                 <p className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
                   Loading orders from Google Sheets...

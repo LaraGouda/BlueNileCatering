@@ -64,7 +64,9 @@ export function MenuCard({ item }: { item: MenuItem }) {
       : `Add to Cart — ${formatPrice(addButtonTotal)}`;
 
   const setChoiceQuantity = (label: string, value: string) => {
-    setChoiceQuantities((prev) => ({ ...prev, [label]: value.replace(/\D/g, "") }));
+    const nextValue = value.replace(/\D/g, "");
+    const cappedValue = nextValue ? String(Math.min(Number(nextValue), 5000)) : "";
+    setChoiceQuantities((prev) => ({ ...prev, [label]: cappedValue }));
   };
 
   const handleAdd = () => {
@@ -184,6 +186,7 @@ export function MenuCard({ item }: { item: MenuItem }) {
                     placeholder="0"
                     inputMode="numeric"
                     className="h-8 text-center"
+                    maxLength={4}
                   />
                 </div>
               ))}
@@ -242,5 +245,5 @@ export function MenuCard({ item }: { item: MenuItem }) {
 
 function parseQuantity(value: string | undefined) {
   const parsed = Number(value ?? "");
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 5000) : 0;
 }

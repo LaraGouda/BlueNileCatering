@@ -8,7 +8,8 @@ import {
   updateOrderPaymentInGoogleSheets,
   updateOrderStatusInGoogleSheets,
 } from "./google-sheets.server";
-import type { DashboardOrder, DashboardPaymentStatus } from "./order-store";
+import { dashboardOrderSchema, normalizeOrderForSubmission } from "./order-validation";
+import type { DashboardPaymentStatus } from "./order-store";
 
 const orderStatusSchema = z.enum([
   "new",
@@ -28,55 +29,15 @@ const paymentStatusSchema = z.enum([
   "failed",
   "refunded",
 ]);
-
-const dashboardOrderSchema: z.ZodType<DashboardOrder> = z.object({
-  id: z.string().min(1),
-  submittedAt: z.string().min(1),
-  status: orderStatusSchema,
-  payment: z.object({
-    status: paymentStatusSchema,
-    stripeCheckoutSessionId: z.string(),
-    stripePaymentIntentId: z.string(),
-    stripeReceiptUrl: z.string(),
-  }),
-  business: z.string().min(1),
-  customer: z.object({
-    name: z.string().min(1),
-    phone: z.string().min(1),
-    email: z.string().email(),
-  }),
-  event: z.object({
-    date: z.string().min(1),
-    time: z.string().min(1),
-    deliveryAddress: z.string().min(1),
-    deliveryAddressLine2: z.string(),
-    zipCode: z.string().min(1),
-    numberOfPeople: z.number().int().positive(),
-    paperSupplies: z.boolean(),
-    individuallyWrapped: z.boolean(),
-    specialInstructions: z.string(),
-  }),
-  cart: z.array(
-    z.object({
-      item: z.string().min(1),
-      selections: z.array(z.string()),
-      notes: z.string(),
-      quantity: z.number().int().positive(),
-      unitPrice: z.number().nonnegative(),
-      lineTotal: z.number().nonnegative(),
-    }),
-  ),
-  totals: z.object({
-    subtotal: z.number().nonnegative(),
-    deliveryFee: z.number().nonnegative(),
-    tax: z.number().nonnegative(),
-    estimatedTotal: z.number().nonnegative(),
-    finalTotal: z.number().nonnegative().nullable(),
-  }),
-});
+const orderIdSchema = z
+  .string()
+  .trim()
+  .max(64)
+  .regex(/^BN-[A-Z0-9-]+$/);
+const stripeIdSchema = z.string().trim().max(255);
 
 export const submitOrderToGoogleSheets = createServerFn({ method: "POST" })
-  .validator((data: unknown) => dashboardOrderSchema.parse(data))
+  .validator((data: unknown) => normalizeOrderForSubmission(dashboardOrderSchema.parse(data)))
   .handler(async ({ data }) => {
     return appendOrderToGoogleSheets(data);
   });
@@ -89,7 +50,7 @@ export const updateGoogleSheetsOrderStatus = createServerFn({ method: "POST" })
   .validator((data: unknown) =>
     z
       .object({
-        orderId: z.string().min(1),
+        orderId: orderIdSchema,
         status: orderStatusSchema,
       })
       .parse(data),
@@ -102,14 +63,14 @@ export const updateGoogleSheetsOrderPayment = createServerFn({ method: "POST" })
   .validator((data: unknown) =>
     z
       .object({
-        orderId: z.string().min(1),
+        orderId: orderIdSchema,
         paymentStatus: paymentStatusSchema,
         orderStatus: orderStatusSchema.optional(),
-        tax: z.number().nonnegative().optional(),
-        finalTotal: z.number().nonnegative().nullable().optional(),
-        stripeCheckoutSessionId: z.string().optional(),
-        stripePaymentIntentId: z.string().optional(),
-        stripeReceiptUrl: z.string().optional(),
+        tax: z.number().finite().nonnegative().max(100_000).optional(),
+        finalTotal: z.number().finite().nonnegative().max(100_000).nullable().optional(),
+        stripeCheckoutSessionId: stripeIdSchema.optional(),
+        stripePaymentIntentId: stripeIdSchema.optional(),
+        stripeReceiptUrl: z.string().trim().max(2_000).optional(),
       })
       .parse(data),
   )
@@ -124,7 +85,7 @@ export const deleteGoogleSheetsOrder = createServerFn({ method: "POST" })
   .validator((data: unknown) =>
     z
       .object({
-        orderId: z.string().min(1),
+        orderId: orderIdSchema,
       })
       .parse(data),
   )

@@ -7,7 +7,7 @@ import {
   createManualCaptureCheckoutSession,
   refundCapturedPayment,
 } from "./stripe.server";
-import type { DashboardOrder } from "./order-store";
+import { dashboardOrderSchema, normalizeOrderForSubmission } from "./order-validation";
 
 const orderStatusSchema = z.enum([
   "new",
@@ -28,63 +28,25 @@ const paymentStatusSchema = z.enum([
   "refunded",
 ]);
 
-const dashboardOrderSchema: z.ZodType<DashboardOrder> = z.object({
-  id: z.string().min(1),
-  submittedAt: z.string().min(1),
-  status: orderStatusSchema,
-  payment: z.object({
-    status: paymentStatusSchema,
-    stripeCheckoutSessionId: z.string(),
-    stripePaymentIntentId: z.string(),
-    stripeReceiptUrl: z.string(),
-  }),
-  business: z.string().min(1),
-  customer: z.object({
-    name: z.string().min(1),
-    phone: z.string().min(1),
-    email: z.string().email(),
-  }),
-  event: z.object({
-    date: z.string().min(1),
-    time: z.string().min(1),
-    deliveryAddress: z.string().min(1),
-    deliveryAddressLine2: z.string(),
-    zipCode: z.string().min(1),
-    numberOfPeople: z.number().int().positive(),
-    paperSupplies: z.boolean(),
-    individuallyWrapped: z.boolean(),
-    specialInstructions: z.string(),
-  }),
-  cart: z.array(
-    z.object({
-      item: z.string().min(1),
-      selections: z.array(z.string()),
-      notes: z.string(),
-      quantity: z.number().int().positive(),
-      unitPrice: z.number().nonnegative(),
-      lineTotal: z.number().nonnegative(),
-    }),
-  ),
-  totals: z.object({
-    subtotal: z.number().nonnegative(),
-    deliveryFee: z.number().nonnegative(),
-    tax: z.number().nonnegative(),
-    estimatedTotal: z.number().nonnegative(),
-    finalTotal: z.number().nonnegative().nullable(),
-  }),
-});
-
 const paymentActionSchema = z.object({
-  orderId: z.string().min(1),
-  paymentIntentId: z.string().min(1),
+  orderId: z
+    .string()
+    .trim()
+    .max(64)
+    .regex(/^BN-[A-Z0-9-]+$/),
+  paymentIntentId: z
+    .string()
+    .trim()
+    .max(255)
+    .regex(/^pi_[A-Za-z0-9_]+$/),
 });
 
 const refundActionSchema = paymentActionSchema.extend({
-  refundAmount: z.number().positive().optional(),
+  refundAmount: z.number().finite().positive().max(100_000).optional(),
 });
 
 export const createStripeCheckoutSession = createServerFn({ method: "POST" })
-  .validator((data: unknown) => dashboardOrderSchema.parse(data))
+  .validator((data: unknown) => normalizeOrderForSubmission(dashboardOrderSchema.parse(data)))
   .handler(async ({ data }) => {
     return createManualCaptureCheckoutSession(data);
   });

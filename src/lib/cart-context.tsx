@@ -1,11 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BUSINESS } from "@/data/menu";
 
 export interface CartLine {
@@ -35,6 +28,8 @@ interface CartContextValue {
 }
 
 const STORAGE_KEY = "blue-nile-cart-v1";
+const MAX_CART_QUANTITY = 5000;
+const MAX_CART_NOTE_LENGTH = 300;
 
 const CartContext = createContext<CartContextValue | null>(null);
 
@@ -70,7 +65,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       const existing = prev.find((l) => l.key === key);
       if (existing) {
         return prev.map((l) =>
-          l.key === key ? { ...l, qty: l.qty + (line.qty ?? 1) } : l,
+          l.key === key ? { ...l, qty: Math.min(MAX_CART_QUANTITY, l.qty + (line.qty ?? 1)) } : l,
         );
       }
       return [
@@ -80,7 +75,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
           itemId: line.itemId,
           name: line.name,
           unitPrice: line.unitPrice,
-          qty: line.qty ?? 1,
+          qty: Math.min(MAX_CART_QUANTITY, line.qty ?? 1),
           selections: line.selections,
           notes: "",
         },
@@ -89,18 +84,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setOpen(true);
   };
 
-  const removeLine = (key: string) =>
-    setLines((prev) => prev.filter((l) => l.key !== key));
+  const removeLine = (key: string) => setLines((prev) => prev.filter((l) => l.key !== key));
 
   const setQty = (key: string, qty: number) =>
     setLines((prev) =>
       qty <= 0
         ? prev.filter((l) => l.key !== key)
-        : prev.map((l) => (l.key === key ? { ...l, qty } : l)),
+        : prev.map((l) => (l.key === key ? { ...l, qty: Math.min(qty, MAX_CART_QUANTITY) } : l)),
     );
 
   const setNotes = (key: string, notes: string) =>
-    setLines((prev) => prev.map((l) => (l.key === key ? { ...l, notes } : l)));
+    setLines((prev) =>
+      prev.map((l) => (l.key === key ? { ...l, notes: notes.slice(0, MAX_CART_NOTE_LENGTH) } : l)),
+    );
 
   const clear = () => setLines([]);
 

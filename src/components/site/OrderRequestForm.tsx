@@ -143,6 +143,7 @@ export function OrderRequestForm() {
     if (!/^\d{5}(-\d{4})?$/.test(form.zipCode.trim())) next.zipCode = "Enter a valid ZIP code.";
     if (!form.people || Number.isNaN(peopleNum) || !Number.isInteger(peopleNum) || peopleNum < 1)
       next.people = "Enter the number of people.";
+    else if (peopleNum > 5000) next.people = "Please call us for orders over 5,000 people.";
     else if (peopleNum < BUSINESS.minimumPeople)
       next.people = `Minimum ${BUSINESS.minimumPeople} people per catering order.`;
     if (hours !== null && hours < BUSINESS.advanceNoticeHours)
@@ -368,6 +369,7 @@ export function OrderRequestForm() {
                 onChange={(e) => set("name")(e.target.value)}
                 placeholder="Your name"
                 autoComplete="name"
+                maxLength={80}
               />,
             )}
             {field(
@@ -380,6 +382,7 @@ export function OrderRequestForm() {
                 onChange={(e) => set("phone")(e.target.value)}
                 placeholder="xxx-xxx-xxxx"
                 autoComplete="tel"
+                maxLength={24}
               />,
             )}
           </div>
@@ -394,6 +397,7 @@ export function OrderRequestForm() {
               onChange={(e) => set("email")(e.target.value)}
               placeholder="you@example.com"
               autoComplete="email"
+              maxLength={254}
             />,
           )}
 
@@ -440,6 +444,7 @@ export function OrderRequestForm() {
               onChange={(e) => set("address")(e.target.value)}
               placeholder="Street address"
               autoComplete="address-line1"
+              maxLength={160}
             />,
           )}
 
@@ -452,6 +457,7 @@ export function OrderRequestForm() {
               onChange={(e) => set("addressLine2")(e.target.value)}
               placeholder="Apartment, suite, floor, company name, etc. (optional)"
               autoComplete="address-line2"
+              maxLength={120}
             />,
           )}
 
@@ -466,6 +472,7 @@ export function OrderRequestForm() {
                 placeholder="xxxxx"
                 autoComplete="postal-code"
                 inputMode="numeric"
+                maxLength={10}
               />,
             )}
             {field(
@@ -475,6 +482,7 @@ export function OrderRequestForm() {
                 id="people"
                 type="number"
                 min={1}
+                max={5000}
                 value={form.people}
                 onChange={(e) => set("people")(e.target.value)}
               />,
@@ -542,6 +550,7 @@ export function OrderRequestForm() {
               onChange={(e) => set("instructions")(e.target.value)}
               placeholder="Allergies, setup notes, gate codes, etc."
               rows={4}
+              maxLength={800}
             />,
           )}
 

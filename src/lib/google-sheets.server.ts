@@ -38,6 +38,7 @@ const MAX_CUSTOMER_ACCESS_CODE_ATTEMPTS = 5;
 const DATABASE_TEXT_COLOR = { red: 0, green: 0, blue: 0 };
 const DATABASE_ROW_WHITE = { red: 1, green: 1, blue: 1 };
 const DATABASE_ROW_LIGHT_BLUE = { red: 0.9, green: 0.96, blue: 1 };
+const SHEET_FORMULA_PREFIX = /^[=+\-@]/;
 
 const ORDER_HEADERS = [
   "orderId",
@@ -1122,42 +1123,42 @@ async function findOrderRow(client: GoogleSheetsClient, orderId: string) {
 
 function toOrderRow(order: DashboardOrder): SheetValue[] {
   return [
-    order.id,
-    order.submittedAt,
-    new Date().toISOString(),
-    order.status,
-    order.payment.status,
-    order.customer.name,
-    order.customer.phone,
-    order.customer.email,
-    order.event.date,
-    order.event.time,
-    order.event.deliveryAddress,
-    order.event.deliveryAddressLine2,
-    order.event.zipCode,
+    sheetText(order.id),
+    sheetText(order.submittedAt),
+    sheetText(new Date().toISOString()),
+    sheetText(order.status),
+    sheetText(order.payment.status),
+    sheetText(order.customer.name),
+    sheetText(order.customer.phone),
+    sheetText(order.customer.email),
+    sheetText(order.event.date),
+    sheetText(order.event.time),
+    sheetText(order.event.deliveryAddress),
+    sheetText(order.event.deliveryAddressLine2),
+    sheetText(order.event.zipCode),
     order.event.numberOfPeople,
-    order.event.individuallyWrapped ? "yes" : "no",
-    order.event.specialInstructions,
+    sheetText(order.event.individuallyWrapped ? "yes" : "no"),
+    sheetText(order.event.specialInstructions),
     order.totals.subtotal,
     order.totals.deliveryFee,
     order.totals.tax,
     order.totals.estimatedTotal,
     order.totals.finalTotal ?? "",
-    order.payment.stripeCheckoutSessionId,
-    order.payment.stripePaymentIntentId,
-    order.payment.stripeReceiptUrl,
-    order.event.paperSupplies ? "yes" : "no",
+    sheetText(order.payment.stripeCheckoutSessionId),
+    sheetText(order.payment.stripePaymentIntentId),
+    sheetText(order.payment.stripeReceiptUrl),
+    sheetText(order.event.paperSupplies ? "yes" : "no"),
   ];
 }
 
 function toOrderItemRows(order: DashboardOrder): SheetValue[][] {
   return order.cart.map((line, index) => [
-    order.id,
+    sheetText(order.id),
     index + 1,
-    line.item,
+    sheetText(line.item),
     line.quantity,
-    line.selections.join(" | "),
-    line.notes,
+    sheetText(line.selections.join(" | ")),
+    sheetText(line.notes),
     line.unitPrice,
     line.lineTotal,
   ]);
@@ -1165,11 +1166,11 @@ function toOrderItemRows(order: DashboardOrder): SheetValue[][] {
 
 function toServiceStatusRow(status: ServiceStatus): SheetValue[] {
   return [
-    status.suspended ? "yes" : "no",
-    status.messageMode,
-    status.customMessage,
-    status.resumeDate,
-    status.updatedAt,
+    sheetText(status.suspended ? "yes" : "no"),
+    sheetText(status.messageMode),
+    sheetText(status.customMessage),
+    sheetText(status.resumeDate),
+    sheetText(status.updatedAt),
   ];
 }
 
@@ -1311,7 +1312,8 @@ function normalizeRow(row: SheetValue[], length: number) {
 
 function cell(row: SheetValue[], index: number) {
   const value = row[index];
-  return value === undefined || value === null ? "" : String(value).trim();
+  if (value === undefined || value === null) return "";
+  return unescapeSheetText(String(value).trim());
 }
 
 function numberCell(row: SheetValue[], index: number) {
@@ -1338,6 +1340,15 @@ function parseSheetNumber(value: string) {
 
 function parseSheetBoolean(value: string) {
   return ["true", "yes", "1", "y"].includes(value.trim().toLowerCase());
+}
+
+function sheetText(value: string) {
+  const text = String(value);
+  return SHEET_FORMULA_PREFIX.test(text.trimStart()) ? `'${text}` : text;
+}
+
+function unescapeSheetText(value: string) {
+  return value.replace(/^'(?=[=+\-@])/, "");
 }
 
 function base64Url(value: string) {

@@ -14,17 +14,8 @@ import { useCart } from "@/lib/cart-context";
 import { BUSINESS, formatPrice } from "@/data/menu";
 
 export function CartSheet() {
-  const {
-    lines,
-    removeLine,
-    setQty,
-    setNotes,
-    subtotal,
-    deliveryFee,
-    total,
-    isOpen,
-    setOpen,
-  } = useCart();
+  const { lines, removeLine, setQty, setNotes, subtotal, deliveryFee, total, isOpen, setOpen } =
+    useCart();
 
   return (
     <Sheet open={isOpen} onOpenChange={setOpen}>
@@ -70,9 +61,7 @@ export function CartSheet() {
                     >
                       <Minus className="h-3.5 w-3.5" />
                     </Button>
-                    <span className="w-6 text-center text-sm font-semibold">
-                      {line.qty}
-                    </span>
+                    <span className="w-6 text-center text-sm font-semibold">{line.qty}</span>
                     <Button
                       variant="outline"
                       size="icon"
@@ -98,6 +87,7 @@ export function CartSheet() {
                     placeholder="Notes for this item (optional)"
                     value={line.notes}
                     onChange={(e) => setNotes(line.key, e.target.value)}
+                    maxLength={300}
                   />
                 </li>
               ))}
@@ -125,9 +115,8 @@ export function CartSheet() {
               <div className="mt-2 flex items-start gap-2 rounded-md bg-warning p-2 text-xs text-warning-foreground">
                 <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <p>
-                  Catering orders require a minimum of {BUSINESS.minimumPeople}{" "}
-                  people. If your order looks small, please double-check it
-                  meets the minimum.
+                  Catering orders require a minimum of {BUSINESS.minimumPeople} people. If your
+                  order looks small, please double-check it meets the minimum.
                 </p>
               </div>
 
