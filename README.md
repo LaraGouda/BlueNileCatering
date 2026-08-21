@@ -27,6 +27,3 @@ Built with care by Lara Gouda for Blue Nile. :)
 - Resend for transactional emails.
 - Vite for building and running the project.
 
-## Project Feel
-
-The goal was to make something practical but still personal: a real ordering system that feels like it belongs to a family-owned catering business, not a generic checkout page. The site keeps the menu easy to scan, the order flow straightforward, and the kitchen details visible where they need to be.

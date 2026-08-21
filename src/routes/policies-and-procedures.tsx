@@ -112,7 +112,6 @@ const POLICY_SECTIONS = [
     items: [
       "All allergies, sensitivities, vegetarian needs, and dietary requests should be entered in the special instructions field and confirmed directly with Blue Nile.",
       "The kitchen handles common allergens including wheat, dairy, eggs, sesame, soy, tree nuts, peanuts, seafood, and shellfish.",
-      "Blue Nile will try to accommodate requests, but cannot guarantee an allergen-free environment or prevent cross-contact.",
     ],
   },
   {
