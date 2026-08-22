@@ -497,7 +497,7 @@ export function OrderRequestForm() {
           )}
 
           <div className="space-y-2">
-            <Label>Optional Add-ons</Label>
+            <p className="text-sm font-medium leading-none">Optional Add-ons</p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="rounded-md border border-border bg-background p-3">
                 <div className="flex items-start gap-3">

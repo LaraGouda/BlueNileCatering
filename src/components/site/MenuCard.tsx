@@ -146,9 +146,9 @@ export function MenuCard({ item }: { item: MenuItem }) {
       <div className="mt-3 flex flex-1 flex-col justify-end gap-2.5">
         {item.variants && (
           <div>
-            <Label className="mb-1 block text-xs text-muted-foreground">
+            <p className="mb-1 block text-xs font-medium text-muted-foreground">
               Option — {priceLabel}
-            </Label>
+            </p>
             <Select value={variantLabel} onValueChange={setVariantLabel}>
               <SelectTrigger className="h-9 w-full bg-background">
                 <SelectValue />
@@ -166,7 +166,7 @@ export function MenuCard({ item }: { item: MenuItem }) {
 
         {quantityChoices.length > 0 && (
           <div className="space-y-2">
-            <Label className="block text-xs text-muted-foreground">Quantities</Label>
+            <p className="block text-xs font-medium text-muted-foreground">Quantities</p>
             <div className="space-y-2">
               {quantityChoices.map((choice, index) => (
                 <div
@@ -196,7 +196,7 @@ export function MenuCard({ item }: { item: MenuItem }) {
 
         {singleOptions.map((opt) => (
           <div key={opt.name}>
-            <Label className="mb-1 block text-xs text-muted-foreground">{opt.name}</Label>
+            <p className="mb-1 block text-xs font-medium text-muted-foreground">{opt.name}</p>
             <Select
               value={singleChoices[opt.name] ?? ""}
               onValueChange={(v) => setSingleChoices((prev) => ({ ...prev, [opt.name]: v }))}
